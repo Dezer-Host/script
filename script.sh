@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 set -euo pipefail  
 
 
@@ -1150,6 +1143,8 @@ configure_laravel() {
         exit $composer_exit_code
     fi
     
+    execute_with_loading "php artisan storage:link" "Linking storage directory"
+
     if [[ "$OPERATION_MODE" == "install" ]]; then
         execute_with_loading "php artisan key:generate --force" "Generating application key"
         
