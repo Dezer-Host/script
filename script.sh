@@ -104,7 +104,10 @@ print_banner() {
 print_step() {
     echo ""
     print_color $BOLD "${CYAN}┌─────────────────────────────────────────────────────────────┐"
-    print_color $BOLD "${CYAN}│ STEP $1: $2"                                                │
+    local step_line="Step $1: $2"
+    local pad_length=$((57 - ${#step_line}))
+    printf -v pad '%*s' "$pad_length" ''
+    print_color $BOLD "${CYAN}${step_line}${pad}│"
     print_color $BOLD "${CYAN}└─────────────────────────────────────────────────────────────┘"
 }
 
