@@ -1319,6 +1319,8 @@ EOF
 server {
     listen 80;
     server_name $DOMAIN;
+    return 301 http://\$server_name\$request_uri;
+    
     root $INSTALL_DIR/public;
     index index.php;
 
