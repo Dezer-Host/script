@@ -24,6 +24,7 @@ LOG_FILE="/tmp/dezerx-install.log"
 OPERATION_MODE=""  
 BACKUP_DIR=""
 DB_BACKUP_FILE=""
+RESTORE_ON_FAILURE=""
 
 
 print_color() {
@@ -156,6 +157,22 @@ choose_operation_mode() {
             2)
                 OPERATION_MODE="update"
                 print_success "Selected: Update Existing Installation"
+                print_color $WHITE "Would you like to automatically restore the previous backup if an error occurs? (y/n):"
+                read -r restore_choice
+                case $restore_choice in
+                    [Yy]|[Yy][Ee][Ss])
+                        print_info "Automatic restore enabled"
+                        RESTORE_ON_FAILURE="yes"
+                        ;;
+                    [Nn]|[Nn][Oo])
+                        print_info "Automatic restore disabled"
+                        RESTORE_ON_FAILURE="no"
+                        ;;
+                    *)
+                        print_error "Invalid choice. Defaulting to automatic restore."
+                        RESTORE_ON_FAILURE="yes"
+                        ;;
+                esac
                 break
                 ;;
             *)
@@ -1418,8 +1435,12 @@ run_migrations() {
         tail -20 "$LOG_FILE" | grep -A 10 -B 10 "migrate"
         
         if [[ "$OPERATION_MODE" == "update" ]]; then
-            print_error "Restoring backup due to migration failure..."
-            restore_backup
+            if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
+                print_error "Restoring backup due to migration failure..."
+                restore_backup
+            else
+                print_warning "Restore on failure is disabled, skipping backup restore..."
+            fi
         fi
         exit 1
     fi
@@ -1436,8 +1457,12 @@ run_migrations() {
         tail -20 "$LOG_FILE" | grep -A 10 -B 10 "seed"
         
         if [[ "$OPERATION_MODE" == "update" ]]; then
-            print_error "Restoring backup due to seeding failure..."
-            restore_backup
+            if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
+                print_error "Restoring backup due to seeding failure..."
+                restore_backup
+            else
+                print_error "Restore on failure is disabled, skipping backup restore..."
+            fi
         fi
         exit 1
     fi
@@ -1684,7 +1709,7 @@ cleanup_on_error() {
     print_error "Operation failed at line $1"
     print_info "Check the operation log: $LOG_FILE"
     
-    if [[ "$OPERATION_MODE" == "update" ]]; then
+    if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
         print_error "Attempting to restore from backup..."
         restore_backup
         restore_database 
