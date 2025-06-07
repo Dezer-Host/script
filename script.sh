@@ -157,6 +157,7 @@ choose_operation_mode() {
             2)
                 OPERATION_MODE="update"
                 print_success "Selected: Update Existing Installation"
+                print_warning "The non automatic restore feature is intended for developers and testing environments only."
                 print_color $WHITE "Would you like to automatically restore the previous backup if an error occurs? (y/n):"
                 read -r restore_choice
                 case $restore_choice in
