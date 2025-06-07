@@ -31,6 +31,16 @@ print_color() {
     printf "${1}${2}${NC}\n"
 }
 
+check_required_commands() {
+    local cmds=(curl awk grep sed)
+    for cmd in "${cmds[@]}"; do
+        if ! command -v "$cmd" &>/dev/null; then
+            print_error "Required command '$cmd' not found. Please install it."
+            exit 1
+        fi
+    done
+}
+
 
 log_message() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
@@ -1731,7 +1741,8 @@ main() {
 
     trap 'cleanup_on_error $LINENO' ERR
     
-
+    
+    check_required_commands
     check_root
     choose_operation_mode
     check_system_requirements
