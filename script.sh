@@ -148,10 +148,11 @@ choose_operation_mode() {
     print_color $CYAN "What would you like to do?"
     print_color $WHITE "1) 🆕 Fresh Installation - Install DezerX from scratch"
     print_color $WHITE "2) 🔄 Update Existing - Update an existing DezerX installation"
+    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️"
     echo ""
 
     while true; do
-        print_color $WHITE "Please choose an option (1 or 2):"
+        print_color $WHITE "Please choose an option (1 or 2 or 3):"
         read -r choice
         case $choice in
         1)
@@ -198,8 +199,73 @@ choose_operation_mode() {
             esac
             break
             ;;
+        3)
+            OPERATION_MODE="delete"
+            print_success "Selected: Delete Installation"
+            print_warning "This will remove DezerX and all its data permanently!"
+            print_color $WHITE "Are you sure you want to delete the installation? Type 'yes continue' to confirm:"
+            read -r confirm_delete
+            if [[ "$confirm_delete" == "yes continue" ]]; then
+                print_info "Proceeding with deletion..."
+
+                # Ask for installation directory
+                print_color $WHITE "Enter the DezerX installation directory to delete [default: /var/www/DezerX]:"
+                read -r INSTALL_DIR
+                if [[ -z "$INSTALL_DIR" ]]; then
+                    INSTALL_DIR="/var/www/DezerX"
+                fi
+                if [[ ! -d "$INSTALL_DIR" ]]; then
+                    print_error "Directory $INSTALL_DIR does not exist. Aborting deletion."
+                    exit 1
+                fi
+
+                # Remove Nginx config
+                if [[ -f /etc/nginx/sites-enabled/dezerx.conf ]]; then
+                    rm -f /etc/nginx/sites-enabled/dezerx.conf 2>>"$LOG_FILE" || deletion_error=1
+                fi
+                if [[ -f /etc/nginx/sites-available/dezerx.conf ]]; then
+                    rm -f /etc/nginx/sites-available/dezerx.conf 2>>"$LOG_FILE" || deletion_error=1
+                fi
+                systemctl reload nginx 2>>"$LOG_FILE" || deletion_error=1
+
+                # Remove installation directory
+                if [[ -d "$INSTALL_DIR" ]]; then
+                    rm -rf "$INSTALL_DIR" 2>>"$LOG_FILE" || deletion_error=1
+                    print_success "Installation directory removed: $INSTALL_DIR"
+                fi
+
+                # Remove database and user if possible
+                if command -v mariadb &>/dev/null; then
+                    # Load DB info from .env if available
+                    if [[ -f "$INSTALL_DIR/.env" ]]; then
+                        DB_FULL_NAME=$(grep '^DB_DATABASE=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"')
+                        DB_USER_FULL=$(grep '^DB_USERNAME=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"')
+                    fi
+
+                    if [[ -n "$DB_FULL_NAME" ]]; then
+                        print_info "Attempting to remove database and user..."
+                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;" 2>>"$LOG_FILE" || deletion_error=1
+                    fi
+                    if [[ -n "$DB_USER_FULL" ]]; then
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';" 2>>"$LOG_FILE" || deletion_error=1
+                    fi
+                    print_success "Database and user removed (if they existed)."
+                fi
+
+                if [[ "${deletion_error:-0}" -ne 0 ]]; then
+                    print_error "Some errors occurred during deletion. Please check the log: $LOG_FILE"
+                else
+                    print_success "DezerX and all related data have been deleted."
+                fi
+                exit 0
+            else
+                print_info "Deletion cancelled by user"
+                exit 0
+            fi
+            break
+            ;;
         *)
-            print_error "Invalid choice. Please enter 1 or 2."
+            print_error "Invalid choice. Please enter 1 or 2 or 3."
             ;;
         esac
     done
