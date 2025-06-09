@@ -1,7 +1,7 @@
 set -euo pipefail
 
 readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
+readonly GREEN='\033[1;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly PURPLE='\033[0;35m'
@@ -47,16 +47,22 @@ log_message() {
 show_loading() {
     local pid=$1
     local message=$2
-    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spin_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local frame_count=${#spin_frames[@]}
     local i=0
-    
-    printf "${BLUE}${message}${NC} "
-    while kill -0 $pid 2>/dev/null; do
-        printf "\b${spin:$i:1}"
-        i=$(( (i+1) % ${#spin} ))
-        sleep 0.1
+
+    # Hide cursor
+    tput civis 2>/dev/null || true
+
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${BLUE}%s %s${NC} " "$message" "${spin_frames[$i]}"
+        i=$(((i + 1) % frame_count))
+        sleep 0.08
     done
-    printf "\b✅\n"
+
+    # Show checkmark and restore cursor
+    printf "\r${BLUE}%s ${GREEN}✔${NC}\n" "$message"
+    tput cnorm 2>/dev/null || true
 }
 
 execute_with_loading() {
@@ -96,7 +102,7 @@ print_banner() {
 ╚══════════════════════════════════════════════════════════════╝
 "
     print_color $YELLOW "📋 This script can install or update DezerX"
-    print_color $YELLOW "⚡ Estimated time: 10-15 minutes (install) / 5-10 minutes (update)"
+    print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 3-5 minutes (update)"
     print_color $YELLOW "📝 Operation log: $LOG_FILE"
     echo ""
 }
@@ -104,15 +110,15 @@ print_banner() {
 print_step() {
     echo ""
     print_color $BOLD "${CYAN}┌─────────────────────────────────────────────────────────────┐"
-    local step_line="Step $1: $2"
-    local pad_length=$((57 - ${#step_line}))
+    local step_line="│ Step $1: $2"
+    local pad_length=$((62 - ${#step_line}))
     printf -v pad '%*s' "$pad_length" ''
     print_color $BOLD "${CYAN}${step_line}${pad}│"
     print_color $BOLD "${CYAN}└─────────────────────────────────────────────────────────────┘"
 }
 
 print_success() {
-    print_color $GREEN "✅ $1"
+    printf "${GREEN}✔ %s${NC}\n" "$1"
 }
 
 print_error() {
@@ -329,6 +335,46 @@ get_install_input() {
         else
             print_error "Invalid directory path. Please try again."
         fi
+    done
+
+    while true; do
+        print_color $CYAN "🗄️  DATABASE CONFIGURATION:"
+        print_color $WHITE "Leave blank to use defaults."
+
+        if [[ -z "$DB_NAME_PREFIX" ]]; then
+            DB_NAME_PREFIX=$(echo "$DOMAIN" | grep -o '^[a-zA-Z]*' | tr '[:upper:]' '[:lower:]' | cut -c1-4)
+            if [[ -z "$DB_NAME_PREFIX" ]]; then
+                DB_NAME_PREFIX="dzrx"
+            fi
+        fi
+
+        print_color $WHITE "Database name [default: ${DB_NAME_PREFIX}_dezerx]:"
+        read -r user_db_name
+        if [[ -n "$user_db_name" ]]; then
+            DB_FULL_NAME="$user_db_name"
+        else
+            DB_FULL_NAME="${DB_NAME_PREFIX}_dezerx"
+        fi
+
+        print_color $WHITE "Database user [default: ${DB_NAME_PREFIX}_dezer]:"
+        read -r user_db_user
+        if [[ -n "$user_db_user" ]]; then
+            DB_USER_FULL="$user_db_user"
+        else
+            DB_USER_FULL="${DB_NAME_PREFIX}_dezer"
+        fi
+
+        print_color $WHITE "Database password [leave blank to auto-generate]:"
+        read -r -s user_db_pass
+        echo
+        if [[ -n "$user_db_pass" ]]; then
+            DB_PASSWORD="$user_db_pass"
+        else
+            if [[ -z "$DB_PASSWORD" ]]; then
+                DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+            fi
+        fi
+        break
     done
 
     echo ""
@@ -633,7 +679,7 @@ install_dependencies() {
     fi
 
     print_info "Adding Redis repository..."
-    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor > /usr/share/keyrings/redis-archive-keyring.gpg 2>/dev/null
+    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor >/usr/share/keyrings/redis-archive-keyring.gpg 2>/dev/null
     echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" >/etc/apt/sources.list.d/redis.list
 
     print_info "Adding MariaDB repository..."
@@ -671,29 +717,6 @@ install_composer() {
     fi
 
     print_success "Composer installed successfully!"
-}
-
-generate_random_prefix() {
-
-    if command -v openssl >/dev/null 2>&1; then
-        DB_NAME_PREFIX=$(openssl rand -hex 20 | tr -dc 'a-z' | head -c 4)
-    elif command -v shuf >/dev/null 2>&1; then
-        DB_NAME_PREFIX=$(echo {a..z} | tr ' ' '\n' | shuf | head -c 4)
-    else
-
-        DB_NAME_PREFIX=$(echo "${RANDOM}$(date +%N)" | sha256sum | tr -dc 'a-z' | head -c 4)
-    fi
-
-    if [[ -z "$DB_NAME_PREFIX" || ${#DB_NAME_PREFIX} -ne 4 ]]; then
-        DB_NAME_PREFIX="dzer"
-    fi
-
-    DB_FULL_NAME="${DB_NAME_PREFIX}_dezerx"
-    DB_USER_FULL="${DB_NAME_PREFIX}_dezer"
-
-    print_info "Generated database prefix: $DB_NAME_PREFIX"
-    print_info "Database name: $DB_FULL_NAME"
-    print_info "Database user: $DB_USER_FULL"
 }
 
 setup_database() {
@@ -1145,14 +1168,14 @@ configure_laravel() {
         update_env_file "KEY" "$LICENSE_KEY" ".env"
 
         print_success "Laravel configuration completed!"
-        print_info "✅ Database configuration updated"
-        print_info "✅ APP_URL set to: ${PROTOCOL}://$DOMAIN"
-        print_info "✅ License key configured in KEY field"
+        print_success "Database configuration updated"
+        print_success "APP_URL set to: ${PROTOCOL}://$DOMAIN"
+        print_success "License key configured in KEY field"
     else
 
         update_env_file "KEY" "$LICENSE_KEY" ".env"
         print_success "Laravel configuration updated!"
-        print_info "✅ License key updated in KEY field"
+        print_success "License key updated in KEY field"
     fi
 
     print_info "Verifying .env configuration..."
@@ -1583,13 +1606,11 @@ print_summary() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
         print_step "18" "INSTALLATION COMPLETE"
 
-        print_color $GREEN "
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║                    🎉 INSTALLATION SUCCESSFUL! 🎉           ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-"
+        print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "║                 🎉 INSTALLATION SUCCESSFUL! 🎉              ║"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
 
         print_success "DezerX has been successfully installed!"
 
@@ -1735,7 +1756,6 @@ main() {
         verify_license
         install_dependencies
         install_composer
-        generate_random_prefix
         setup_database
         download_dezerx
         configure_laravel
