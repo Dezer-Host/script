@@ -1585,14 +1585,11 @@ setup_cron() {
         print_info "Found existing crontab for www-data user"
     else
         print_info "No existing crontab for www-data user, creating new one"
-
         >"$temp_cron_file"
     fi
 
     if ! grep -q "artisan schedule:run" "$temp_cron_file"; then
-
         echo "* * * * * cd $INSTALL_DIR && php artisan schedule:run >> /dev/null 2>&1" >>"$temp_cron_file"
-
         if crontab -u www-data "$temp_cron_file"; then
             print_success "Laravel scheduler added to crontab successfully!"
         else
@@ -1605,6 +1602,16 @@ setup_cron() {
     fi
 
     rm -f "$temp_cron_file"
+
+    # Add certbot renewal cronjob only if https is selected and certbot is installed
+    if [[ "$PROTOCOL" == "https" ]] && command -v certbot &>/dev/null; then
+        if ! crontab -l 2>/dev/null | grep -q 'certbot renew --quiet --deploy-hook "systemctl restart nginx"'; then
+            (crontab -l 2>/dev/null; echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"') | crontab -
+            print_success "Added SSL renewal cronjob for certbot."
+        else
+            print_info "SSL renewal cronjob for certbot already exists."
+        fi
+    fi
 
     if systemctl is-active --quiet cron; then
         print_success "Cron service is running"
