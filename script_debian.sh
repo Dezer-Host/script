@@ -1409,6 +1409,16 @@ configure_laravel() {
             exit 1
         fi
         execute_with_loading "cp .env.example .env" "Copying .env.example to .env"
+        # Ensure .env is writable by www-data before artisan commands modify it
+        if id "www-data" &>/dev/null; then
+            execute_with_loading "chown www-data:www-data .env" "Setting .env ownership to www-data"
+            # Give www-data (owner) write permission. Group www-data also gets write. Others read.
+            execute_with_loading "chmod 664 .env" "Setting .env permissions for www-data write"
+        else
+            print_warning "User www-data not found. .env permissions might be incorrect for artisan commands."
+            # If www-data doesn't exist, execute_as_www_data might run commands as root if sudo isn't present.
+            # In that case, root can write to the root-owned .env file.
+        fi
     else # update
         if [[ ! -f ".env" ]]; then
             print_error ".env file not found in $INSTALL_DIR for update. This is critical."
@@ -1420,7 +1430,7 @@ configure_laravel() {
         fi
         print_info "Using existing .env configuration for update. Will sync with .env.example."
         # Sync .env with .env.example *before* composer install for updates
-        sync_env_files "$INSTALL_DIR"
+        sync_env_files "$INSTALL_DIR" # This function also handles .env permissions
     fi
 
     print_info "Installing/Updating Composer dependencies (can take a few minutes)..."
@@ -1428,13 +1438,9 @@ configure_laravel() {
     local composer_command="composer install --no-interaction --no-dev --optimize-autoloader --prefer-dist"
 
     execute_as_www_data "$composer_command" "Installing Composer dependencies"
-    # Check composer exit code from execute_as_www_data if needed (it returns the code)
     local composer_exit_code=$?
     if [ $composer_exit_code -ne 0 ]; then
         print_error "Composer dependencies installation failed with exit code $composer_exit_code."
-        # The ERR trap will handle script exit if set -e is active.
-        # If we want to attempt restore here specifically:
-        # if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then restore_backup; restore_database; fi
         return $composer_exit_code # Propagate error
     fi
 
@@ -1442,9 +1448,16 @@ configure_laravel() {
     print_info "Continuing with Laravel configuration..."
 
     execute_as_www_data "php artisan storage:link" "Linking storage directory"
+    # No need to check exit code for storage:link usually, but can be added if problematic.
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
         execute_as_www_data "php artisan key:generate --force" "Generating application key"
+        local key_gen_exit_code=$?
+        if [ $key_gen_exit_code -ne 0 ]; then
+            print_error "php artisan key:generate failed with exit code $key_gen_exit_code. Check .env permissions."
+            # This is critical for an install.
+            return $key_gen_exit_code
+        fi
 
         print_info "Updating .env file with installation details..."
         update_env_file "APP_NAME" "DezerX" ".env"
