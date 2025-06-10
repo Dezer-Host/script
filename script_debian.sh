@@ -9,7 +9,7 @@ readonly CYAN='\033[0;36m'
 readonly WHITE='\033[1;37m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
-readonly SCRIPT_VERSION="3.0"
+readonly SCRIPT_VERSION="0.5 ALPHA"
 
 LICENSE_KEY=""
 DOMAIN=""
@@ -101,7 +101,7 @@ print_banner() {
 ║                  🚀 Requires Root Access 🚀                  ║
 ╚══════════════════════════════════════════════════════════════╝
 "
-    print_color $YELLOW "📋 This script can install or update DezerX"
+    print_color $YELLOW "📋 This script can install or update DezerX on Debian systems"
     print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 1-3 minutes (update)"
     print_color $YELLOW "📝 Operation log: $LOG_FILE"
     echo ""
@@ -148,17 +148,17 @@ choose_operation_mode() {
     print_color $CYAN "What would you like to do?"
     print_color $WHITE "1) 🆕 Fresh Installation - Install DezerX from scratch"
     print_color $WHITE "2) 🔄 Update Existing - Update an existing DezerX installation"
-    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️ (Still a work in progress!)"
+    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️"
     echo ""
 
     while true; do
-        print_color $WHITE "Please choose an option (1 or 2 or 3):"
+        print_color $WHITE "Please choose an option (1, 2, or 3):"
         read -r choice
         case $choice in
         1)
             OPERATION_MODE="install"
             print_success "Selected: Fresh Installation"
-            print_warning "The non automatic restore feature is intended for developers and testing environments only."
+            print_warning "The non-automatic restore feature is intended for developers and testing environments only."
             print_color $WHITE "Would you like to automatically restore the previous backup if an error occurs? (y/n):"
             read -r restore_choice
             case $restore_choice in
@@ -180,7 +180,7 @@ choose_operation_mode() {
         2)
             OPERATION_MODE="update"
             print_success "Selected: Update Existing Installation"
-            print_warning "The non automatic restore feature is intended for developers and testing environments only."
+            print_warning "The non-automatic restore feature is intended for developers and testing environments only."
             print_color $WHITE "Would you like to automatically restore the previous backup if an error occurs? (y/n):"
             read -r restore_choice
             case $restore_choice in
@@ -207,57 +207,85 @@ choose_operation_mode() {
             read -r confirm_delete
             if [[ "$confirm_delete" == "yes continue" ]]; then
                 print_info "Proceeding with deletion..."
+                local deletion_error=0
 
                 # Ask for installation directory
                 print_color $WHITE "Enter the DezerX installation directory to delete [default: /var/www/DezerX]:"
-                read -r INSTALL_DIR
-                if [[ -z "$INSTALL_DIR" ]]; then
-                    INSTALL_DIR="/var/www/DezerX"
+                read -r INSTALL_DIR_DELETE
+                if [[ -z "$INSTALL_DIR_DELETE" ]]; then
+                    INSTALL_DIR_DELETE="/var/www/DezerX"
                 fi
 
-                if [[ ! -d "$INSTALL_DIR" ]]; then
-                    print_warning "Directory $INSTALL_DIR does not exist. Skipping directory removal, continuing with deletion steps."
+                local env_file_path_delete="$INSTALL_DIR_DELETE/.env"
+                local DB_FULL_NAME_DELETE=""
+                local DB_USER_FULL_DELETE=""
+
+                if [[ -f "$env_file_path_delete" ]]; then
+                    DB_FULL_NAME_DELETE=$(get_env_variable "DB_DATABASE" "$env_file_path_delete")
+                    DB_USER_FULL_DELETE=$(get_env_variable "DB_USERNAME" "$env_file_path_delete")
                 else
-                    # Remove installation directory
-                    rm -rf "$INSTALL_DIR" 2>>"$LOG_FILE" || deletion_error=1
-                    print_success "Installation directory removed: $INSTALL_DIR"
+                    print_warning ".env file not found at $env_file_path_delete. Will ask for DB details if cleanup is desired."
+                    print_color $WHITE "Do you want to attempt to manually specify and delete database/user? (y/n)"
+                    read -r manual_db_delete
+                    if [[ "$manual_db_delete" =~ ^[Yy]$ ]]; then
+                        print_color $WHITE "Enter database name to delete (leave blank if none):"
+                        read -r DB_FULL_NAME_DELETE
+                        print_color $WHITE "Enter database user to delete (leave blank if none):"
+                        read -r DB_USER_FULL_DELETE
+                    fi
                 fi
 
-                # Remove Nginx config
+                print_info "Removing Nginx configuration..."
                 if [[ -f /etc/nginx/sites-enabled/dezerx.conf ]]; then
-                    rm -f /etc/nginx/sites-enabled/dezerx.conf 2>>"$LOG_FILE" || deletion_error=1
+                    rm -f /etc/nginx/sites-enabled/dezerx.conf >>"$LOG_FILE" 2>&1 || deletion_error=1
                 fi
                 if [[ -f /etc/nginx/sites-available/dezerx.conf ]]; then
-                    rm -f /etc/nginx/sites-available/dezerx.conf 2>>"$LOG_FILE" || deletion_error=1
+                    rm -f /etc/nginx/sites-available/dezerx.conf >>"$LOG_FILE" 2>&1 || deletion_error=1
                 fi
-                systemctl reload nginx 2>>"$LOG_FILE" || deletion_error=1
+                systemctl reload nginx >>"$LOG_FILE" 2>&1 || deletion_error=1
+                print_success "Nginx configuration removed."
 
-                # Remove installation directory
-                if [[ -d "$INSTALL_DIR" ]]; then
-                    rm -rf "$INSTALL_DIR" 2>>"$LOG_FILE" || deletion_error=1
-                    print_success "Installation directory removed: $INSTALL_DIR"
+                print_info "Removing installation directory..."
+                if [[ -d "$INSTALL_DIR_DELETE" ]]; then
+                    rm -rf "$INSTALL_DIR_DELETE" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                    print_success "Installation directory removed: $INSTALL_DIR_DELETE"
+                else
+                    print_warning "Directory $INSTALL_DIR_DELETE does not exist. Skipping directory removal."
                 fi
 
-                # Remove database and user if possible
                 if command -v mariadb &>/dev/null; then
-                    # Load DB info from .env if available
-                    if [[ -f "$INSTALL_DIR/.env" ]]; then
-                        DB_FULL_NAME=$(grep '^DB_DATABASE=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"')
-                        DB_USER_FULL=$(grep '^DB_USERNAME=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"')
+                    if [[ -n "$DB_FULL_NAME_DELETE" ]]; then
+                        print_info "Removing database '$DB_FULL_NAME_DELETE'..."
+                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME_DELETE\`;" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        print_success "Database '$DB_FULL_NAME_DELETE' removed (if it existed)."
                     fi
-
-                    if [[ -n "$DB_FULL_NAME" ]]; then
-                        sudo mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;"
+                    if [[ -n "$DB_USER_FULL_DELETE" ]]; then
+                        print_info "Removing database user '$DB_USER_FULL_DELETE'..."
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL_DELETE'@'127.0.0.1';" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL_DELETE'@'localhost';" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        print_success "Database user '$DB_USER_FULL_DELETE' removed (if it existed)."
                     fi
-                    if [[ -n "$DB_USER_FULL" ]]; then
-                        sudo mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';"
-                        sudo mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'localhost';"
+                    if [[ -n "$DB_FULL_NAME_DELETE" || -n "$DB_USER_FULL_DELETE" ]]; then
+                        mariadb -e "FLUSH PRIVILEGES;" >>"$LOG_FILE" 2>&1 || deletion_error=1
                     fi
-                    sudo mariadb -e "FLUSH PRIVILEGES;"
-                    print_success "Database and user removed (if they existed)."
+                else
+                    print_warning "mariadb command not found. Skipping database and user removal."
                 fi
 
-                if [[ "${deletion_error:-0}" -ne 0 ]]; then
+                print_info "Removing queue worker service..."
+                if systemctl is-active --quiet dezerx.service; then
+                    systemctl stop dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if systemctl is-enabled --quiet dezerx.service; then
+                    systemctl disable dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if [[ -f /etc/systemd/system/dezerx.service ]]; then
+                    rm -f /etc/systemd/system/dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                systemctl daemon-reload >>"$LOG_FILE" 2>&1 || deletion_error=1
+                print_success "Queue worker service removed."
+
+                if [[ "$deletion_error" -ne 0 ]]; then
                     print_error "Some errors occurred during deletion. Please check the log: $LOG_FILE"
                 else
                     print_success "DezerX and all related data have been deleted."
@@ -267,10 +295,10 @@ choose_operation_mode() {
                 print_info "Deletion cancelled by user"
                 exit 0
             fi
-            break
+            break # Should not be reached if deletion proceeds or is cancelled
             ;;
         *)
-            print_error "Invalid choice. Please enter 1 or 2 or 3."
+            print_error "Invalid choice. Please enter 1, 2, or 3."
             ;;
         esac
     done
@@ -300,48 +328,52 @@ check_system_requirements() {
 
     print_info "Operating System: $os_name $os_version"
 
-    if [[ "$os_name" != "Ubuntu" ]] && [[ "$os_name" != "Debian" ]]; then
-        print_error "This script only supports Ubuntu and Debian"
+    if [[ "$os_name" != "Debian" ]]; then
+        print_error "This script only supports Debian GNU/Linux."
+        print_info "Your OS: $os_name $os_version"
         exit 1
     fi
 
-    local available_space=$(df / | awk 'NR==2 {print $4}')
-    local required_space
+    local available_space=$(df / | awk 'NR==2 {print $4}') # Space in 1K blocks
+    local required_space_kb                                # Required space in 1K blocks
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        required_space=5242880
+        required_space_kb=$((5 * 1024 * 1024)) # 5GB in KB
     else
-        required_space=2097152
+        required_space_kb=$((2 * 1024 * 1024)) # 2GB in KB
     fi
 
-    if [[ $available_space -lt $required_space ]]; then
-        print_error "Insufficient disk space. Required: $((required_space / 1024 / 1024))GB, Available: $((available_space / 1024 / 1024))GB"
+    if [[ $available_space -lt $required_space_kb ]]; then
+        print_error "Insufficient disk space. Required: $((required_space_kb / 1024 / 1024))GB, Available: $((available_space / 1024 / 1024))GB"
         exit 1
     fi
 
-    local total_mem=$(free -m | awk 'NR==2{print $2}')
-    if [[ $total_mem -lt 1024 ]]; then
-        print_warning "Low memory detected: ${total_mem}MB. Recommended: 2GB+"
+    local total_mem_mb=$(free -m | awk 'NR==2{print $2}')
+    if [[ $total_mem_mb -lt 1000 ]]; then # Check for ~1GB
+        print_warning "Low memory detected: ${total_mem_mb}MB. Recommended: 2GB (2048MB) or more."
     fi
 
     print_success "System requirements check passed"
 }
 
 validate_domain() {
-    local domain=$1
+    local domain_to_validate=$1 # Renamed to avoid conflict with global DOMAIN
 
-    if [[ $domain =~ ^https?:// ]]; then
-        return 2
+    if [[ $domain_to_validate =~ ^https?:// ]]; then
+        return 2 # Indicates protocol included
     fi
 
-    if [[ ! $domain =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
-        return 1
+    # Basic domain regex: starts with letter/number, can contain letters, numbers, hyphens (not at start/end of a part)
+    # and must have at least one dot for TLD.
+    if [[ ! $domain_to_validate =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
+        return 1 # Invalid format
     fi
-    return 0
+    return 0 # Valid
 }
 
 validate_directory() {
-    local dir=$1
-    if [[ ! $dir =~ ^/[a-zA-Z0-9/_-]+$ ]]; then
+    local dir_to_validate=$1 # Renamed to avoid conflict
+    # Must be an absolute path, basic character set
+    if [[ ! $dir_to_validate =~ ^/[a-zA-Z0-9/._-]+$ ]]; then
         return 1
     fi
     return 0
@@ -404,7 +436,7 @@ get_install_input() {
         if validate_directory "$INSTALL_DIR"; then
             break
         else
-            print_error "Invalid directory path. Please try again."
+            print_error "Invalid directory path. Path must be absolute (e.g., /var/www/myapp). Please try again."
         fi
     done
 
@@ -413,7 +445,7 @@ get_install_input() {
         print_color $WHITE "Leave blank to use defaults."
 
         if [[ -z "$DB_NAME_PREFIX" ]]; then
-            DB_NAME_PREFIX=$(echo "$DOMAIN" | grep -o '^[a-zA-Z]*' | tr '[:upper:]' '[:lower:]' | cut -c1-4)
+            DB_NAME_PREFIX=$(echo "$DOMAIN" | grep -o '^[a-zA-Z0-9]*' | tr '[:upper:]' '[:lower:]' | cut -c1-4)
             if [[ -z "$DB_NAME_PREFIX" ]]; then
                 DB_NAME_PREFIX="dzrx"
             fi
@@ -436,13 +468,13 @@ get_install_input() {
         fi
 
         print_color $WHITE "Database password [leave blank to auto-generate]:"
-        read -r -s user_db_pass
-        echo
+        read -r -s user_db_pass # -s for silent input
+        echo                    # Newline after silent input
         if [[ -n "$user_db_pass" ]]; then
             DB_PASSWORD="$user_db_pass"
         else
-            if [[ -z "$DB_PASSWORD" ]]; then
-                DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+            if [[ -z "$DB_PASSWORD" ]]; then # Generate only if not already set (e.g. by update)
+                DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/\\\\" | cut -c1-25)
             fi
         fi
         break
@@ -454,6 +486,9 @@ get_install_input() {
     print_info "Domain: $DOMAIN"
     print_info "Full URL: ${PROTOCOL}://$DOMAIN"
     print_info "Install Directory: $INSTALL_DIR"
+    print_info "Database Name: $DB_FULL_NAME"
+    print_info "Database User: $DB_USER_FULL"
+    print_info "Database Password: [${DB_PASSWORD:+Generated/Set}]"
     echo ""
 
     while true; do
@@ -546,13 +581,19 @@ get_update_input() {
             continue
         fi
 
-        # --- NEU: DB-Infos aus .env lesen ---
         DB_FULL_NAME=$(get_env_variable "DB_DATABASE" "$INSTALL_DIR/.env")
         DB_USER_FULL=$(get_env_variable "DB_USERNAME" "$INSTALL_DIR/.env")
         DB_PASSWORD=$(get_env_variable "DB_PASSWORD" "$INSTALL_DIR/.env")
-        # Fallback, falls leer:
-        if [[ -z "$DB_FULL_NAME" ]]; then DB_FULL_NAME="dezerx"; fi
-        if [[ -z "$DB_USER_FULL" ]]; then DB_USER_FULL="dezer"; fi
+
+        if [[ -z "$DB_FULL_NAME" ]]; then
+            DB_FULL_NAME="dezerx"
+            print_warning "DB_DATABASE not found in .env, using default 'dezerx'"
+        fi
+        if [[ -z "$DB_USER_FULL" ]]; then
+            DB_USER_FULL="dezer"
+            print_warning "DB_USERNAME not found in .env, using default 'dezer'"
+        fi
+        # DB_PASSWORD can be empty if not set or if user wants to re-enter, handle accordingly
 
         break
     done
@@ -563,6 +604,7 @@ get_update_input() {
     print_color $CYAN "📋 UPDATE SUMMARY:"
     print_info "License Key: ${LICENSE_KEY:0:8}***"
     print_info "Domain: $DOMAIN"
+    print_info "Full URL: ${PROTOCOL}://$DOMAIN"
     print_info "Existing Directory: $INSTALL_DIR"
     echo ""
 
@@ -590,14 +632,16 @@ verify_license() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
         print_step "4" "VERIFYING LICENSE"
     else
-        print_step "4" "VERIFYING LICENSE"
+        print_step "4" "VERIFYING LICENSE" # Update also needs license verification
     fi
 
     print_info "Contacting DezerX license server..."
 
-    local temp_file=$(mktemp)
+    local temp_file
+    temp_file=$(mktemp)
     local http_code
 
+    # Ensure curl uses a reasonable timeout
     http_code=$(curl -s -w "%{http_code}" -X POST \
         -H "Authorization: Bearer $LICENSE_KEY" \
         -H "domain: $DOMAIN" \
@@ -613,33 +657,45 @@ verify_license() {
         rm -f "$temp_file"
         return 0
     else
-        print_error "License verification failed (HTTP: $http_code)"
+        print_error "License verification failed (HTTP Code: $http_code)"
         if [[ -f "$temp_file" ]]; then
-            local error_msg=$(cat "$temp_file" 2>/dev/null || echo "Unknown error")
+            local error_msg
+            error_msg=$(cat "$temp_file" 2>/dev/null || echo "Unknown error from server")
             print_error "Server response: $error_msg"
             rm -f "$temp_file"
         fi
-        print_error "Please check your license key and domain."
+        print_error "Please check your license key and domain, then try again."
         exit 1
     fi
 }
 
 create_backup() {
-    print_step "5" "CREATING BACKUP"
+    # This function is only relevant for update mode
+    if [[ "$OPERATION_MODE" != "update" ]]; then
+        return 0
+    fi
+
+    print_step "5" "CREATING BACKUP OF EXISTING INSTALLATION"
 
     BACKUP_DIR="/tmp/dezerx-backup-$(date +%Y%m%d-%H%M%S)"
 
-    print_info "Creating full backup of existing installation..."
     print_info "Backup location: $BACKUP_DIR"
 
-    execute_with_loading "cp -r $INSTALL_DIR $BACKUP_DIR" "Creating backup of $INSTALL_DIR"
-
-    if [[ ! -f "$BACKUP_DIR/.env" ]]; then
-        print_error "Backup verification failed - .env file not found in backup"
+    # Ensure INSTALL_DIR is set
+    if [[ -z "$INSTALL_DIR" || ! -d "$INSTALL_DIR" ]]; then
+        print_error "Installation directory '$INSTALL_DIR' not found or not set. Cannot create backup."
         exit 1
     fi
 
-    print_success "Backup created successfully!"
+    execute_with_loading "cp -a \"$INSTALL_DIR\" \"$BACKUP_DIR\"" "Creating backup of $INSTALL_DIR"
+
+    if [[ ! -f "$BACKUP_DIR/.env" ]]; then
+        print_error "Backup verification failed - .env file not found in backup directory: $BACKUP_DIR"
+        # Decide if this is fatal or a warning. For safety, let's make it fatal.
+        exit 1
+    fi
+
+    print_success "Application files backup created successfully!"
     print_info "💾 Backup saved to: $BACKUP_DIR"
 }
 
@@ -647,44 +703,51 @@ get_env_variable() {
     local var_name="$1"
     local env_file="$2"
     if [[ -f "$env_file" ]]; then
-
-        grep "^${var_name}=" "$env_file" | cut -d '=' -f 2- | sed 's/\r$//' | sed 's/"//g' | sed "s/'//g"
+        # Read variable, remove potential quotes and carriage returns
+        grep "^${var_name}=" "$env_file" | cut -d '=' -f 2- | sed 's/\r$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
     else
-        echo ""
+        echo "" # Return empty if file not found
     fi
 }
 
 backup_database() {
+    if [[ "$OPERATION_MODE" != "update" ]]; then
+        return 0
+    fi
+
     print_step "5.1" "BACKING UP DATABASE"
 
-    local env_file="$INSTALL_DIR/.env"
+    local env_file="$INSTALL_DIR/.env" # Use current INSTALL_DIR for .env
 
     if [[ ! -f "$env_file" ]]; then
         print_warning ".env file not found at $env_file. Skipping database backup."
-        return 0 # This should return, not exit
+        return 0
     fi
 
-    local db_connection=$(get_env_variable "DB_CONNECTION" "$env_file")
-    local db_host=$(get_env_variable "DB_HOST" "$env_file")
-    local db_port=$(get_env_variable "DB_PORT" "$env_file")
-    local db_database=$(get_env_variable "DB_DATABASE" "$env_file")
-    local db_username=$(get_env_variable "DB_USERNAME" "$env_file")
-    local db_password=$(get_env_variable "DB_PASSWORD" "$env_file")
+    local db_connection db_host db_port db_database db_username db_password_env
+    db_connection=$(get_env_variable "DB_CONNECTION" "$env_file")
+    db_host=$(get_env_variable "DB_HOST" "$env_file")
+    db_port=$(get_env_variable "DB_PORT" "$env_file")
+    db_database=$(get_env_variable "DB_DATABASE" "$env_file")     # This is DB_FULL_NAME
+    db_username=$(get_env_variable "DB_USERNAME" "$env_file")     # This is DB_USER_FULL
+    db_password_env=$(get_env_variable "DB_PASSWORD" "$env_file") # This is DB_PASSWORD
 
     if [[ "$db_connection" != "mysql" ]]; then
-        print_warning "Database connection is not 'mysql' in .env. Skipping database backup."
-        return 0 # This should return, not exit
+        print_warning "Database connection is not 'mysql' in .env (found: '$db_connection'). Skipping database backup."
+        return 0
     fi
 
     if [[ -z "$db_host" || -z "$db_database" || -z "$db_username" ]]; then
-        print_error "Missing database credentials in .env file. Cannot perform database backup."
-        exit 1 # Only exit on critical errors
+        print_error "Missing critical database credentials (host, database, or username) in .env file. Cannot perform database backup."
+        # This is critical, so we should probably exit or make it very clear.
+        # For now, let's return 1 to indicate failure.
+        return 1
     fi
 
     # Use existing BACKUP_DIR from create_backup()
-    if [[ -z "$BACKUP_DIR" ]]; then
-        print_error "BACKUP_DIR not set. create_backup() should run first."
-        exit 1
+    if [[ -z "$BACKUP_DIR" || ! -d "$BACKUP_DIR" ]]; then
+        print_error "BACKUP_DIR '$BACKUP_DIR' not set or not a directory. create_backup() should run first."
+        return 1
     fi
 
     DB_BACKUP_FILE="$BACKUP_DIR/database_$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -694,112 +757,220 @@ backup_database() {
 
     local port_arg=""
     if [[ -n "$db_port" ]]; then
-        port_arg="-P $db_port"
+        port_arg="--port=$db_port"
     fi
 
-    export MYSQL_PWD="$db_password"
-    local mysqldump_cmd="mysqldump -h $db_host $port_arg -u $db_username $db_database | gzip > \"$DB_BACKUP_FILE\""
+    # Temporarily set MYSQL_PWD for mysqldump
+    export MYSQL_PWD="$db_password_env"
+    local mysqldump_cmd="mysqldump --host=$db_host $port_arg --user=$db_username $db_database | gzip > \"$DB_BACKUP_FILE\""
 
     if ! command -v mysqldump &>/dev/null; then
         print_error "mysqldump command not found. Cannot perform database backup."
         unset MYSQL_PWD
-        exit 1
-    fi
-
-    execute_with_loading "$mysqldump_cmd" "Creating database backup"
-    local exit_code=$?
-    unset MYSQL_PWD
-
-    if [ $exit_code -ne 0 ]; then
-        print_error "Database backup failed!"
         return 1
     fi
 
-    if [[ ! -s "$DB_BACKUP_FILE" ]]; then
-        print_error "Database backup file is empty or not created!"
+    # Use execute_with_loading for this potentially long operation
+    execute_with_loading "$mysqldump_cmd" "Creating database backup"
+    local dump_exit_code=$? # Get exit code from execute_with_loading's wait
+    unset MYSQL_PWD         # Always unset password
+
+    if [ $dump_exit_code -ne 0 ]; then
+        print_error "Database backup failed! (mysqldump exit code: $dump_exit_code)"
+        rm -f "$DB_BACKUP_FILE" # Clean up failed backup file
+        return 1
+    fi
+
+    if [[ ! -s "$DB_BACKUP_FILE" ]]; then # Check if file exists and is not empty
+        print_error "Database backup file is empty or was not created: $DB_BACKUP_FILE"
         return 1
     fi
 
     print_success "Database backup completed successfully!"
     print_info "Database backup saved to: $DB_BACKUP_FILE"
+    return 0
+}
 
-    # Add explicit continuation message
-    print_info "Continuing with update process..."
+restore_database() {
+    if [[ "$OPERATION_MODE" != "update" || "$RESTORE_ON_FAILURE" != "yes" ]]; then
+        return 0
+    fi
+
+    print_info "Attempting to restore database from backup..."
+
+    if [[ -z "$DB_BACKUP_FILE" || ! -f "$DB_BACKUP_FILE" ]]; then
+        print_warning "No database backup file found ($DB_BACKUP_FILE) or specified. Skipping database restore."
+        return 1
+    fi
+
+    local env_file="$INSTALL_DIR/.env" # Use INSTALL_DIR which should now point to the restored app files
+    if [[ ! -f "$env_file" ]]; then
+        # If .env is not in restored app files, try backup dir .env
+        env_file="$BACKUP_DIR/.env"
+    fi
+
+    if [[ ! -f "$env_file" ]]; then
+        print_error ".env file not found in $INSTALL_DIR or $BACKUP_DIR. Cannot determine database credentials for restore."
+        return 1
+    fi
+
+    local db_host db_port db_database db_username db_password_env
+    db_host=$(get_env_variable "DB_HOST" "$env_file")
+    db_port=$(get_env_variable "DB_PORT" "$env_file")
+    db_database=$(get_env_variable "DB_DATABASE" "$env_file")
+    db_username=$(get_env_variable "DB_USERNAME" "$env_file")
+    db_password_env=$(get_env_variable "DB_PASSWORD" "$env_file")
+
+    if [[ -z "$db_host" || -z "$db_database" || -z "$db_username" ]]; then
+        print_error "Missing database credentials in .env. Cannot restore database."
+        return 1
+    fi
+
+    print_info "Restoring database '$db_database' from $DB_BACKUP_FILE..."
+
+    local port_arg=""
+    if [[ -n "$db_port" ]]; then
+        port_arg="--port=$db_port"
+    fi
+
+    export MYSQL_PWD="$db_password_env"
+    # Drop and recreate database before import to ensure clean state
+    mariadb --host="$db_host" $port_arg --user="$db_username" -e "DROP DATABASE IF EXISTS \`$db_database\`; CREATE DATABASE \`$db_database\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" >>"$LOG_FILE" 2>&1
+
+    local restore_cmd="gunzip < \"$DB_BACKUP_FILE\" | mariadb --host=$db_host $port_arg --user=$db_username $db_database"
+
+    execute_with_loading "$restore_cmd" "Restoring database content"
+    local restore_exit_code=$?
+    unset MYSQL_PWD
+
+    if [ $restore_exit_code -ne 0 ]; then
+        print_error "Database restore failed! (Exit code: $restore_exit_code)"
+        return 1
+    fi
+
+    print_success "Database restored successfully from $DB_BACKUP_FILE."
     return 0
 }
 
 restore_backup() {
-    print_error "Restoring from backup due to update failure..."
+    # This function is only relevant for update mode if RESTORE_ON_FAILURE is yes
+    if [[ "$OPERATION_MODE" != "update" || "$RESTORE_ON_FAILURE" != "yes" ]]; then
+        return 0
+    fi
+
+    print_error "Attempting to restore application files from backup due to failure..."
 
     if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
-        print_info "Removing failed update files..."
-        rm -rf "$INSTALL_DIR"
+        print_info "Removing potentially failed/incomplete update files from $INSTALL_DIR..."
+        rm -rf "$INSTALL_DIR"/* "$INSTALL_DIR"/.[^.]* 2>/dev/null || true # Clean target
+        mkdir -p "$INSTALL_DIR"                                           # Ensure target dir exists
 
-        print_info "Restoring from backup: $BACKUP_DIR"
-        mv "$BACKUP_DIR" "$INSTALL_DIR"
+        print_info "Restoring application files from backup: $BACKUP_DIR to $INSTALL_DIR"
+        # Use cp -a for preserving attributes, then rsync for safety if cp fails partially
+        if cp -a "$BACKUP_DIR"/* "$INSTALL_DIR"/ && cp -a "$BACKUP_DIR"/.[^.]* "$INSTALL_DIR"/ 2>/dev/null; then
+            : # cp successful
+        else
+            # Fallback to rsync if cp had issues (e.g. with hidden files)
+            rsync -a --delete "$BACKUP_DIR/" "$INSTALL_DIR/" >>"$LOG_FILE" 2>&1
+        fi
 
-        print_info "Setting proper permissions after restore..."
-        chown -R www-data:www-data "$INSTALL_DIR"
-        chmod -R 755 "$INSTALL_DIR"
+        print_info "Setting proper permissions after file restore..."
+        # Ensure www-data exists or use a fallback if necessary (though www-data is standard on Debian for Nginx/Apache)
+        if id "www-data" &>/dev/null; then
+            chown -R www-data:www-data "$INSTALL_DIR" >>"$LOG_FILE" 2>&1
+        else
+            print_warning "User www-data not found. Skipping chown for restored files."
+        fi
+        chmod -R 755 "$INSTALL_DIR" >>"$LOG_FILE" 2>&1
         chmod -R 775 "$INSTALL_DIR/storage" 2>/dev/null || true
         chmod -R 775 "$INSTALL_DIR/bootstrap/cache" 2>/dev/null || true
 
-        print_success "Backup restored successfully!"
-        print_info "Your original installation has been restored"
+        print_success "Application files backup restored successfully to $INSTALL_DIR!"
+        print_info "Your original application files should be restored."
     else
-        print_error "No backup found to restore from!"
+        print_error "No backup directory found ($BACKUP_DIR) or it's not a directory. Cannot restore application files."
+        return 1 # Indicate failure
     fi
+    return 0
 }
 
 install_dependencies() {
-    print_step "5" "INSTALLING SYSTEM DEPENDENCIES"
+    print_step "5" "INSTALLING SYSTEM DEPENDENCIES" # Step number consistent for install
 
-    execute_with_loading "apt-get update" "Updating package lists"
-    execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y" "Upgrading system packages"
+    execute_with_loading "apt-get update -qq" "Updating package lists"
+    execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq" "Upgrading system packages"
 
-    execute_with_loading "apt-get install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release wget unzip git cron" "Installing basic dependencies"
+    local base_packages="software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release wget unzip git cron"
+    execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $base_packages" "Installing basic dependencies"
 
-    print_info "Adding PHP repository..."
+    print_info "Adding PHP repository (ppa:ondrej/php for up-to-date versions)..."
+    # Ensure software-properties-common is installed before trying to add PPA
+    if ! command -v add-apt-repository &>/dev/null; then
+        execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq software-properties-common" "Installing software-properties-common"
+    fi
+
+    # LC_ALL=C.UTF-8 is good practice for locale issues with add-apt-repository
     if ! LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>"$LOG_FILE" 2>&1; then
-        print_warning "Failed to add PHP PPA, trying alternative method..."
+        print_warning "Failed to add PHP PPA (ppa:ondrej/php). PHP installation might use older versions from default Debian repos or fail."
+        # Consider alternative: DEB.SURY.ORG direct method if PPA fails
+        print_info "Attempting to add PHP repository using deb.sury.org direct method..."
+        if ! (curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg &&
+            echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" >/etc/apt/sources.list.d/php.list &&
+            apt-get update -qq); then
+            print_error "Failed to add PHP repository using alternative method as well. PHP installation may fail."
+        else
+            print_success "Successfully added PHP repository using deb.sury.org direct method."
+        fi
+    else
+        print_success "PHP PPA added successfully."
     fi
 
     print_info "Adding Redis repository..."
-    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor >/usr/share/keyrings/redis-archive-keyring.gpg 2>/dev/null
+    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg >>"$LOG_FILE" 2>&1
     echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" >/etc/apt/sources.list.d/redis.list
 
     print_info "Adding MariaDB repository..."
-    curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash >>"$LOG_FILE" 2>&1
+    # The mariadb_repo_setup script is generally robust.
+    if ! curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash >>"$LOG_FILE" 2>&1; then
+        print_warning "Failed to add MariaDB repository using script. MariaDB installation might use older versions or fail."
+    else
+        print_success "MariaDB repository added successfully."
+    fi
 
-    execute_with_loading "apt-get update" "Updating package lists with new repositories"
+    execute_with_loading "apt-get update -qq" "Updating package lists with new repositories"
 
-    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server ufw"
+    local php_version="8.3" # Define PHP version
+    local app_packages="nginx php${php_version} php${php_version}-common php${php_version}-cli php${php_version}-gd php${php_version}-mysql php${php_version}-mbstring php${php_version}-bcmath php${php_version}-xml php${php_version}-fpm php${php_version}-curl php${php_version}-zip mariadb-server mariadb-client tar unzip git redis-server ufw"
 
-    execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y $packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
+    execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $app_packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
 
     execute_with_loading "systemctl start nginx && systemctl enable nginx" "Starting and enabling Nginx"
-    execute_with_loading "systemctl start php8.3-fpm && systemctl enable php8.3-fpm" "Starting and enabling PHP-FPM"
+    execute_with_loading "systemctl start php${php_version}-fpm && systemctl enable php${php_version}-fpm" "Starting and enabling PHP-FPM"
     execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis"
     execute_with_loading "systemctl start cron && systemctl enable cron" "Starting and enabling Cron service"
-    execute_with_loading "systemctl stop ufw && systemctl disable ufw" "Stoping and disabling UFW due to later configuration"
 
-    execute_with_loading "mkdir -p /var/www" "Creating /var/www directory"
+    # UFW is handled later in prompt_ufw_firewall, ensure it's not prematurely blocking if already active.
+    # If UFW is active and enabled, new rules for HTTP/S will be added. If not, user is prompted.
+    # No need to stop/disable it here unless there's a specific reason.
+
+    execute_with_loading "mkdir -p /var/www" "Creating /var/www directory if it doesn't exist"
 
     print_success "System dependencies installed successfully!"
 }
 
 install_composer() {
-    print_step "6" "INSTALLING COMPOSER"
+    print_step "6" "INSTALLING COMPOSER" # Step number consistent for install
 
     local composer_installer="/tmp/composer-installer.php"
 
     execute_with_loading "curl -sS https://getcomposer.org/installer -o $composer_installer" "Downloading Composer installer"
-    execute_with_loading "php $composer_installer --install-dir=/usr/local/bin --filename=composer" "Installing Composer"
+    # Install Composer globally
+    execute_with_loading "php $composer_installer --install-dir=/usr/local/bin --filename=composer" "Installing Composer to /usr/local/bin"
 
-    rm -f "$composer_installer"
+    rm -f "$composer_installer" # Clean up installer script
 
     if ! command -v composer &>/dev/null; then
-        print_error "Composer installation failed"
+        print_error "Composer installation failed. 'composer' command not found."
         exit 1
     fi
 
@@ -807,75 +978,76 @@ install_composer() {
 }
 
 setup_database() {
-    print_step "7" "SETTING UP DATABASE"
+    print_step "7" "SETTING UP DATABASE" # Step number consistent for install
 
-    execute_with_loading "systemctl start mariadb && systemctl enable mariadb" "Starting MariaDB service"
+    execute_with_loading "systemctl start mariadb && systemctl enable mariadb" "Starting and enabling MariaDB service"
 
-    DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    # DB_PASSWORD should be set from get_install_input or generated if empty
+    if [[ -z "$DB_PASSWORD" ]]; then
+        DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/\\\\" | cut -c1-25)
+        print_info "Generated a new secure password for the database user."
+    fi
+
+    # DB_FULL_NAME and DB_USER_FULL should be set from get_install_input
+    if [[ -z "$DB_FULL_NAME" || -z "$DB_USER_FULL" ]]; then
+        print_error "Database name or user is not set. Cannot proceed with database setup."
+        exit 1
+    fi
 
     print_info "Securing MariaDB installation and creating database/user..."
+    print_info "Database: $DB_FULL_NAME, User: $DB_USER_FULL"
 
-    local sql_file=$(mktemp)
-    cat >"$sql_file" <<EOF
+    # Use a heredoc for the SQL commands for clarity
+    local sql_commands
+    sql_commands=$(
+        cat <<EOF
+-- Secure installation (equivalent of parts of mysql_secure_installation)
+-- Remove anonymous users
+DELETE FROM mysql.global_priv WHERE User='';
+-- Disallow root login remotely
+DELETE FROM mysql.global_priv WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+-- Remove test database
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+
 -- Create the dedicated database for the application
 CREATE DATABASE IF NOT EXISTS \`$DB_FULL_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Create the dedicated user for the application (both hosts!)
+-- Create the dedicated user for the application (for both localhost and 127.0.0.1)
 CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
 CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
 
--- Grant all privileges on the application database to the user (both hosts!)
-GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'127.0.0.1' WITH GRANT OPTION;
-GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'localhost' WITH GRANT OPTION;
-
--- Apply all privilege changes
-FLUSH PRIVILEGES;
-EOF
-
-    if ! mariadb <"$sql_file" >>"$LOG_FILE" 2>&1; then
-        print_error "Failed to secure MariaDB installation"
-        rm -f "$sql_file"
-        exit 1
-    fi
-
-    cat >"$sql_file" <<EOF
--- Create the dedicated database for the application
-CREATE DATABASE IF NOT EXISTS \`$DB_FULL_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- Create the dedicated user for the application
-CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
-
 -- Grant all privileges on the application database to the user
-GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'localhost';
 
 -- Apply all privilege changes
 FLUSH PRIVILEGES;
 EOF
-
-    if ! mariadb <"$sql_file" >>"$LOG_FILE" 2>&1; then
-        print_error "Failed to create database and user"
-        rm -f "$sql_file"
+    )
+    # Execute SQL commands
+    if ! echo "$sql_commands" | mariadb >>"$LOG_FILE" 2>&1; then
+        print_error "Failed to execute MariaDB setup commands. Check $LOG_FILE for details."
         exit 1
     fi
-
-    rm -f "$sql_file"
 
     print_success "Database setup completed successfully!"
     print_info "Database: $DB_FULL_NAME"
     print_info "Username: $DB_USER_FULL"
-    print_info "Password: [Generated securely]"
+    print_info "Password: [Set or Generated Securely]"
 }
 
 download_dezerx() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "8" "DOWNLOADING DEZERX"
-    else
-        print_step "6" "DOWNLOADING DEZERX UPDATE"
+        print_step "8" "DOWNLOADING DEZERX APPLICATION FILES"
+    else # update
+        print_step "6" "DOWNLOADING DEZERX UPDATE FILES"
     fi
 
     print_info "Requesting download URL from DezerX servers..."
 
-    local temp_file=$(mktemp)
+    local temp_file
+    temp_file=$(mktemp)
     local http_code
 
     http_code=$(curl -s -w "%{http_code}" -X POST \
@@ -889,298 +1061,241 @@ download_dezerx() {
         https://market.dezerx.com/api/v1/download)
 
     if [[ "$http_code" != "200" ]]; then
-        print_error "Failed to get download URL (HTTP: $http_code)"
+        print_error "Failed to get download URL (HTTP Code: $http_code)"
         if [[ -f "$temp_file" ]]; then
-            local error_msg=$(cat "$temp_file" 2>/dev/null || echo "Unknown error")
+            local error_msg
+            error_msg=$(cat "$temp_file" 2>/dev/null || echo "Unknown error from server")
             print_error "Server response: $error_msg"
         fi
         rm -f "$temp_file"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
             restore_backup
+            restore_database
         fi
         exit 1
     fi
 
     local download_url
+    # Try jq first, then fallback to grep/cut for robustness
     if command -v jq &>/dev/null; then
         download_url=$(jq -r '.download_url' "$temp_file" 2>/dev/null)
     else
-        download_url=$(grep -o '"download_url":"[^"]*' "$temp_file" | cut -d'"' -f4 | sed 's/\\//g')
+        download_url=$(grep -o '"download_url":"[^"]*' "$temp_file" | cut -d'"' -f4 | sed 's/\\//g') # Basic parsing
     fi
-
     rm -f "$temp_file"
 
     if [[ -z "$download_url" || "$download_url" == "null" ]]; then
-        print_error "Failed to extract download URL from server response"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
+        print_error "Failed to extract download URL from server response."
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
             restore_backup
+            restore_database
         fi
         exit 1
     fi
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
         print_info "Creating installation directory: $INSTALL_DIR"
-        mkdir -p "$INSTALL_DIR"
+        mkdir -p "$INSTALL_DIR" # Ensure directory exists
     fi
 
-    print_info "Downloading DezerX package..."
-    local download_file="/tmp/dezerx-$(date +%s).zip"
+    print_info "Downloading DezerX package from secured URL..."
+    local download_file="/tmp/dezerx-package-$(date +%s).zip"
 
-    if ! curl -L -o "$download_file" \
-        --progress-bar \
-        --connect-timeout 30 \
-        --max-time 300 \
-        "$download_url"; then
-        print_error "Download failed"
+    # Use curl with progress bar for better UX
+    if ! curl -L -o "$download_file" --progress-bar --connect-timeout 30 --max-time 300 "$download_url"; then
+        print_error "Download failed. Check network connection and URL."
         rm -f "$download_file"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
             restore_backup
+            restore_database
         fi
         exit 1
     fi
+    echo # Newline after progress bar
 
-    print_success "Download completed successfully!"
+    print_success "Download completed successfully: $download_file"
 
-    print_info "Extracting files to temporary location..."
-    local temp_extract_dir=$(mktemp -d)
+    print_info "Extracting files to a temporary location..."
+    local temp_extract_dir
+    temp_extract_dir=$(mktemp -d /tmp/dezerx-extract.XXXXXX)
 
     if ! unzip -q "$download_file" -d "$temp_extract_dir"; then
-        print_error "Failed to extract files"
+        print_error "Failed to extract files from $download_file to $temp_extract_dir."
         rm -f "$download_file"
         rm -rf "$temp_extract_dir"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
             restore_backup
+            restore_database
         fi
         exit 1
     fi
+    rm -f "$download_file" # Clean up downloaded zip
 
-    rm -f "$download_file"
+    print_info "Locating DezerX application files within extracted archive..."
+    # Common pattern: archive might contain a single root folder like 'DezerX-version' or 'dist'
+    local dezerx_source_dir="$temp_extract_dir" # Default to root of extraction
 
-    print_info "Locating DezerX files in extracted archive..."
+    # Try to find a directory with .env.example or artisan to be more specific
+    local found_artisan_dir
+    found_artisan_dir=$(find "$temp_extract_dir" -maxdepth 2 -name "artisan" -printf "%h\n" | head -n 1)
 
-    local dezerx_source_dir=""
-    local found_dirs=()
-
-    while IFS= read -r -d '' dir; do
-        found_dirs+=("$dir")
-    done < <(find "$temp_extract_dir" -maxdepth 1 -type d -name "*DezerX*" -print0)
-
-    if [[ ${#found_dirs[@]} -eq 0 ]]; then
-        print_error "No DezerX directory found in the extracted archive"
-        print_info "Contents of extracted archive:"
-        ls -la "$temp_extract_dir" || true
-        rm -rf "$temp_extract_dir"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
-            restore_backup
-        fi
-        exit 1
-    elif [[ ${#found_dirs[@]} -eq 1 ]]; then
-        dezerx_source_dir="${found_dirs[0]}"
+    if [[ -n "$found_artisan_dir" && -d "$found_artisan_dir" ]]; then
+        dezerx_source_dir="$found_artisan_dir"
+        print_info "Found application files in subdirectory: $(basename "$dezerx_source_dir")"
     else
-
-        for dir in "${found_dirs[@]}"; do
-            if [[ -f "$dir/.env.example" ]]; then
-                dezerx_source_dir="$dir"
-                break
-            fi
-        done
-
-        if [[ -z "$dezerx_source_dir" ]]; then
-            dezerx_source_dir="${found_dirs[0]}"
-        fi
+        print_info "Using root of extracted archive as source."
     fi
 
-    print_info "Found DezerX files in: $(basename "$dezerx_source_dir")"
-
-    if [[ ! -f "$dezerx_source_dir/.env.example" ]]; then
-        print_error "Invalid DezerX package - .env.example not found in $(basename "$dezerx_source_dir")"
-        print_info "Contents of $(basename "$dezerx_source_dir"):"
-        ls -la "$dezerx_source_dir" || true
+    if [[ ! -f "$dezerx_source_dir/.env.example" && ! -f "$dezerx_source_dir/artisan" ]]; then
+        print_error "Invalid DezerX package - .env.example or artisan not found in '$dezerx_source_dir'."
+        ls -la "$dezerx_source_dir" # List contents for debugging
         rm -rf "$temp_extract_dir"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
             restore_backup
+            restore_database
         fi
         exit 1
     fi
 
-    print_info "Moving DezerX files to installation directory..."
-
+    print_info "Moving DezerX files to installation directory: $INSTALL_DIR"
+    # For install, clear directory first. For update, rsync will overwrite.
     if [[ "$OPERATION_MODE" == "install" ]]; then
-
-        rm -rf "$INSTALL_DIR"
-        mkdir -p "$INSTALL_DIR"
-
-        if ! mv "$dezerx_source_dir"/* "$INSTALL_DIR"/; then
-            print_error "Failed to move DezerX files to installation directory"
-            rm -rf "$temp_extract_dir"
-            if [[ "$OPERATION_MODE" == "update" ]]; then
-                restore_backup
-            fi
-            exit 1
-        fi
-
-        if ls "$dezerx_source_dir"/.[^.]* >/dev/null 2>&1; then
-            for file in "$dezerx_source_dir"/.[^.]*; do
-                mv "$file" "$INSTALL_DIR"/ 2>/dev/null || true
-            done
-        fi
-    else
-
-        print_info "Preserving .env file and storage directory..."
-
-        print_info "Copying updated files to installation directory (excluding .env.example and storage)..."
-        if ! rsync -a --exclude='.env.example' --exclude='storage' "$dezerx_source_dir"/ "$INSTALL_DIR"/; then
-            print_error "Failed to copy updated files to installation directory"
-            rm -rf "$temp_extract_dir"
-            restore_backup
-            exit 1
-        fi
-
-        if ls "$dezerx_source_dir"/.[^.]* >/dev/null 2>&1; then
-            for file in "$dezerx_source_dir"/.[^.]*; do
-                local filename=$(basename "$file")
-                if [[ "$filename" == ".env" ]]; then
-
-                    continue
-                fi
-
-                if ! rsync -a "$file" "$INSTALL_DIR"/; then
-                    print_warning "Failed to copy hidden file $filename"
-                fi
-            done
-        fi
+        rm -rf "$INSTALL_DIR"/* "$INSTALL_DIR"/.[^.]* 2>/dev/null # Clean existing content
+        mkdir -p "$INSTALL_DIR"                                   # Ensure it exists
     fi
 
-    rm -rf "$temp_extract_dir"
+    # Use rsync for robust copy, handling existing files correctly for updates
+    # Exclude .env for updates to preserve existing settings, it will be synced later
+    local rsync_exclude_opts=""
+    if [[ "$OPERATION_MODE" == "update" ]]; then
+        rsync_exclude_opts="--exclude '.env'"
+    fi
+
+    if ! rsync -a $rsync_exclude_opts "$dezerx_source_dir/" "$INSTALL_DIR/"; then
+        print_error "Failed to move/copy DezerX files to $INSTALL_DIR."
+        rm -rf "$temp_extract_dir"
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
+            restore_backup
+            restore_database
+        fi
+        exit 1
+    fi
+
+    rm -rf "$temp_extract_dir" # Clean up temporary extraction directory
 
     if [[ "$OPERATION_MODE" == "install" && ! -f "$INSTALL_DIR/.env.example" ]]; then
-        print_error "DezerX files not properly moved - .env.example not found in $INSTALL_DIR"
-        print_info "Contents of $INSTALL_DIR:"
-        ls -la "$INSTALL_DIR" || true
+        print_error "DezerX files not properly moved - .env.example not found in $INSTALL_DIR."
+        ls -la "$INSTALL_DIR" # List contents for debugging
         exit 1
     fi
 
     print_success "DezerX files extracted and organized successfully!"
-    print_info "Installation directory: $INSTALL_DIR"
+    print_info "Application directory: $INSTALL_DIR"
 }
 
 update_env_file() {
-    local key="$1"
-    local value="$2"
-    local env_file="$3"
+    local key_to_update="$1"   # Renamed to avoid conflict
+    local value_to_set="$2"    # Renamed
+    local target_env_file="$3" # Renamed
 
-    cp "$env_file" "${env_file}.bak"
-
-    if command -v perl >/dev/null 2>&1; then
-        if grep -q "^${key}=" "$env_file"; then
-
-            perl -i -pe "s|^${key}=.*|${key}=${value}|" "$env_file" &&
-                print_info "Updated ${key} in .env file (perl method)" && return 0
-        else
-
-            echo "${key}=${value}" >>"$env_file" &&
-                print_info "Added ${key} to .env file" && return 0
-        fi
+    if [[ ! -f "$target_env_file" ]]; then
+        print_error "Cannot update .env: File not found at $target_env_file"
+        return 1
     fi
 
-    if command -v awk >/dev/null 2>&1; then
-        local temp_file=$(mktemp)
-        if grep -q "^${key}=" "$env_file"; then
+    # Create a backup before modifying
+    cp "$target_env_file" "${target_env_file}.bak-$(date +%s)"
 
-            awk -v key="$key" -v val="$value" '{
-                if ($0 ~ "^"key"=") {
-                    print key"="val
-                } else {
-                    print $0
-                }
-            }' "$env_file" >"$temp_file" &&
-                mv "$temp_file" "$env_file" &&
-                print_info "Updated ${key} in .env file (awk method)" && return 0
-        else
+    # Escape value for sed: & / \ need escaping. Also handle newlines if any.
+    local escaped_value
+    escaped_value=$(printf '%s\n' "$value_to_set" | sed -e 's/[\/&]/\\&/g') # Basic escaping for sed
 
-            echo "${key}=${value}" >>"$env_file" &&
-                print_info "Added ${key} to .env file" && return 0
-        fi
-    fi
-
-    if grep -q "^${key}=" "$env_file"; then
-
-        local temp_file=$(mktemp)
-        grep -v "^${key}=" "$env_file" >"$temp_file"
-        echo "${key}=${value}" >>"$temp_file"
-        mv "$temp_file" "$env_file"
-        print_info "Updated ${key} in .env file (grep method)" && return 0
+    if grep -q "^${key_to_update}=" "$target_env_file"; then
+        # Key exists, update it
+        sed -i -e "s|^${key_to_update}=.*|${key_to_update}=${escaped_value}|" "$target_env_file"
+        log_message "Updated ${key_to_update} in $target_env_file"
     else
-
-        echo "${key}=${value}" >>"$env_file" &&
-            print_info "Added ${key} to .env file" && return 0
+        # Key does not exist, add it
+        echo "${key_to_update}=${escaped_value}" >>"$target_env_file"
+        log_message "Added ${key_to_update} to $target_env_file"
     fi
 
-    print_error "Failed to update ${key} in .env file"
-
-    mv "${env_file}.bak" "$env_file"
-    return 1
+    # Verify change (optional, simple check)
+    if grep -q "^${key_to_update}=${escaped_value}" "$target_env_file"; then
+        print_info "Successfully updated/added '$key_to_update' in $target_env_file."
+        return 0
+    else
+        print_error "Failed to verify update for '$key_to_update' in $target_env_file."
+        # Restore backup on failure
+        mv "${target_env_file}.bak-$(date +%s)" "$target_env_file" # This backup name needs to be consistent or find last .bak
+        return 1
+    fi
 }
 
 sync_env_files() {
-    local install_dir="$1"
-    local env_example_file="$install_dir/.env.example"
-    local env_file="$install_dir/.env"
+    local current_install_dir="$1" # Renamed
+    local example_env="$current_install_dir/.env.example"
+    local live_env="$current_install_dir/.env"
 
-    if [[ ! -f "$env_example_file" ]]; then
-        print_warning ".env.example not found in $install_dir. Cannot sync .env."
+    if [[ ! -f "$example_env" ]]; then
+        print_warning ".env.example not found in $current_install_dir. Cannot sync .env."
+        return 0 # Not fatal, but a warning
+    fi
+
+    if [[ ! -f "$live_env" ]]; then
+        print_warning ".env not found in $current_install_dir. This is unusual for an update. Skipping .env sync."
+        # If it's an install, .env is copied from .env.example, so this sync is less critical.
+        # If it's an update and .env is missing, that's a bigger problem.
         return 0
     fi
 
-    if [[ ! -f "$env_file" ]]; then
-        print_warning ".env not found in $install_dir. This should not happen during an update. Skipping .env sync."
-        return 0
-    fi
+    print_info "Synchronizing $live_env with $example_env..."
 
-    print_info "Synchronizing .env with .env.example..."
-
+    # Ensure .env ends with a newline for robust parsing/appending
     if [[ $(
-        tail -c 1 "$env_file"
+        tail -c1 "$live_env"
         echo x
-    ) != $'
-'x ]]; then
-        print_info "Adding a trailing newline to .env file."
-        echo "" >>"$env_file"
+    ) != $'\nx' ]]; then
+        echo >>"$live_env"
+        print_info "Added trailing newline to $live_env."
     fi
 
-    local env_example_lines
-    mapfile -t env_example_lines <"$env_example_file"
-
-    local added_vars=0
-
-    for line in "${env_example_lines[@]}"; do
-
-        local key=""
-
-        if [[ "$line" =~ ^[[:alnum:]_]+= ]]; then
-            key="$(echo "$line" | cut -d= -f1)"
+    local added_vars_count=0
+    # Read .env.example line by line
+    # IFS= prevents stripping leading/trailing whitespace from lines
+    # -r prevents backslash escapes from being interpreted
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip comments and empty lines
+        if [[ "$line" =~ ^\s*# || -z "$line" ]]; then
+            continue
         fi
 
-        if [[ -n "$key" ]]; then
+        # Extract key from "KEY=VALUE" format
+        local key_from_example
+        key_from_example=$(echo "$line" | cut -d'=' -f1)
 
-            if ! grep -q "^${key}=" "$env_file"; then
-
-                printf "%s\n" "$line" >>"$env_file"
-                print_info "Added missing variable '$key' from .env.example to .env."
-                added_vars=$((added_vars + 1))
-
+        if [[ -n "$key_from_example" ]]; then
+            # Check if key exists in the live .env file (match whole line beginning with KEY=)
+            if ! grep -q "^${key_from_example}=" "$live_env"; then
+                # Key does not exist in live .env, so append the whole line from .env.example
+                printf "%s\n" "$line" >>"$live_env"
+                print_info "Added missing variable '$key_from_example' from .env.example to .env."
+                added_vars_count=$((added_vars_count + 1))
             fi
         fi
-    done
+    done <"$example_env"
 
-    if [[ $added_vars -gt 0 ]]; then
-        print_success "Synchronization complete. $added_vars new variables added to .env."
+    if [[ $added_vars_count -gt 0 ]]; then
+        print_success "Synchronization complete. $added_vars_count new variable(s) added to .env."
     else
-        print_info ".env is already up-to-date with .env.example (no new variables to add)."
+        print_info ".env is already up-to-date with .env.example (no new variables found to add)."
     fi
 
-    chown www-data:www-data "$env_file" 2>/dev/null || true
-    chmod 644 "$env_file" 2>/dev/null || true
+    # Ensure correct permissions for .env
+    if id "www-data" &>/dev/null; then
+        chown www-data:www-data "$live_env" >>"$LOG_FILE" 2>&1
+    fi
+    chmod 640 "$live_env" >>"$LOG_FILE" 2>&1 # More secure permission
 
     print_success ".env synchronization check finished."
 }
@@ -1188,346 +1303,448 @@ sync_env_files() {
 configure_laravel() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
         print_step "9" "CONFIGURING LARAVEL APPLICATION"
-    else
+    else # update
         print_step "7" "UPDATING LARAVEL CONFIGURATION"
     fi
 
-    cd "$INSTALL_DIR"
+    cd "$INSTALL_DIR" || {
+        print_error "Failed to change directory to $INSTALL_DIR"
+        exit 1
+    }
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
         if [[ ! -f ".env.example" ]]; then
-            print_error ".env.example file not found in $INSTALL_DIR"
-            print_info "Directory contents:"
-            ls -la "$INSTALL_DIR" || true
+            print_error ".env.example file not found in $INSTALL_DIR. Download might have failed."
+            ls -la "$INSTALL_DIR" # List contents for debugging
             exit 1
         fi
-
-        execute_with_loading "cp .env.example .env" "Copying environment configuration"
-    else
+        execute_with_loading "cp .env.example .env" "Copying .env.example to .env"
+    else # update
         if [[ ! -f ".env" ]]; then
-            print_error ".env file not found in $INSTALL_DIR"
-            restore_backup
+            print_error ".env file not found in $INSTALL_DIR for update. This is critical."
+            if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
+                restore_backup
+                restore_database
+            fi
             exit 1
         fi
-        print_info "Using existing .env configuration"
-
-        # Move sync_env_files to BEFORE composer install
-        print_step "7.1" "SYNCHRONIZING .ENV FILE"
+        print_info "Using existing .env configuration for update. Will sync with .env.example."
+        # Sync .env with .env.example *before* composer install for updates
         sync_env_files "$INSTALL_DIR"
     fi
 
-    print_info "Installing Composer dependencies..."
-    if [[ "$OPERATION_MODE" == "install" ]]; then
-        echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
+    print_info "Installing/Updating Composer dependencies (can take a few minutes)..."
+    # --no-interaction for non-interactive, --no-dev for production, --prefer-dist for speed
+    local composer_command="composer install --no-interaction --no-dev --optimize-autoloader --prefer-dist"
+
+    # Run composer as www-data if possible, to avoid permission issues later
+    if id "www-data" &>/dev/null; then
+        execute_with_loading "sudo -u www-data $composer_command" "Installing Composer dependencies as www-data"
     else
-        # Remove the duplicate sync_env_files call that was here
-        echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
+        print_warning "User www-data not found. Running Composer as current user. Check file permissions later."
+        execute_with_loading "$composer_command" "Installing Composer dependencies"
     fi
+    # Check composer exit code from execute_with_loading if needed (it exits on failure)
 
-    local composer_pid=$!
-    show_loading $composer_pid "Installing Composer dependencies"
-    wait $composer_pid
-    local composer_exit_code=$?
-
-    if [ $composer_exit_code -ne 0 ]; then
-        print_error "Composer installation failed"
-        print_error "Check log file: $LOG_FILE"
-        if [[ "$OPERATION_MODE" == "update" ]]; then
-            restore_backup
-        fi
-        exit $composer_exit_code
-    fi
-
-    # Add explicit success message and continuation
-    print_success "Composer dependencies installed successfully!"
+    print_success "Composer dependencies installed/updated successfully!"
     print_info "Continuing with Laravel configuration..."
 
-    execute_with_loading "php artisan storage:link" "Linking storage directory"
+    # Link storage (run as www-data if possible)
+    local artisan_cmd_prefix=""
+    if id "www-data" &>/dev/null; then
+        artisan_cmd_prefix="sudo -u www-data php artisan"
+    else
+        artisan_cmd_prefix="php artisan"
+    fi
+
+    execute_with_loading "$artisan_cmd_prefix storage:link" "Linking storage directory"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        execute_with_loading "php artisan key:generate --force" "Generating application key"
+        execute_with_loading "$artisan_cmd_prefix key:generate --force" "Generating application key"
 
-        print_info "Updating environment configuration..."
+        print_info "Updating .env file with installation details..."
+        update_env_file "APP_NAME" "DezerX" ".env"
+        update_env_file "APP_ENV" "production" ".env"
+        update_env_file "APP_DEBUG" "false" ".env"
+        update_env_file "APP_URL" "${PROTOCOL}://$DOMAIN" ".env"
+
+        update_env_file "LOG_CHANNEL" "stack" ".env"
+        update_env_file "LOG_LEVEL" "error" ".env" # Production logging
 
         update_env_file "DB_CONNECTION" "mysql" ".env"
         update_env_file "DB_HOST" "127.0.0.1" ".env"
         update_env_file "DB_PORT" "3306" ".env"
         update_env_file "DB_DATABASE" "$DB_FULL_NAME" ".env"
         update_env_file "DB_USERNAME" "$DB_USER_FULL" ".env"
-        update_env_file "DB_PASSWORD" "$DB_PASSWORD" ".env"
+        update_env_file "DB_PASSWORD" "$DB_PASSWORD" ".env" # Ensure DB_PASSWORD is quoted if it contains special chars
 
+        update_env_file "BROADCAST_DRIVER" "log" ".env"      # Default, can be changed to redis
+        update_env_file "CACHE_DRIVER" "file" ".env"         # Default, can be changed to redis
+        update_env_file "QUEUE_CONNECTION" "database" ".env" # Default, can be changed to redis
+        update_env_file "SESSION_DRIVER" "file" ".env"       # Default, can be changed to redis
+        update_env_file "SESSION_LIFETIME" "120" ".env"
+
+        update_env_file "REDIS_HOST" "127.0.0.1" ".env"
+        update_env_file "REDIS_PASSWORD" "null" ".env"
+        update_env_file "REDIS_PORT" "6379" ".env"
+
+        update_env_file "KEY" "$LICENSE_KEY" ".env" # Custom DezerX license key field
+
+        print_success "Laravel .env configuration updated for installation."
+    else # update
+        # For updates, primarily ensure APP_URL and DezerX KEY are correct.
+        # Other critical settings like DB connection should be preserved from existing .env
         update_env_file "APP_URL" "${PROTOCOL}://$DOMAIN" ".env"
         update_env_file "KEY" "$LICENSE_KEY" ".env"
-
-        print_success "Laravel configuration completed!"
-        print_success "Database configuration updated"
-        print_success "APP_URL set to: ${PROTOCOL}://$DOMAIN"
-        print_success "License key configured in KEY field"
-    else
-        update_env_file "KEY" "$LICENSE_KEY" ".env"
-        print_success "Laravel configuration updated!"
-        print_success "License key updated in KEY field"
+        print_success "Laravel .env configuration checked/updated for update (APP_URL, KEY)."
     fi
 
-    print_info "Verifying .env configuration..."
-    if grep -q "^APP_KEY=" .env && grep -q "^KEY=" .env; then
-        print_success "Both APP_KEY and KEY are properly configured"
-        print_info "APP_KEY: $(grep '^APP_KEY=' .env | cut -d'=' -f2 | cut -c1-20)..."
-        print_info "KEY: $(grep '^KEY=' .env | cut -d'=' -f2 | cut -c1-8)***"
-    else
-        print_warning "Could not verify all keys in .env file"
-    fi
+    print_info "Optimizing Laravel application..."
+    execute_with_loading "$artisan_cmd_prefix config:cache" "Caching configuration"
+    execute_with_loading "$artisan_cmd_prefix route:cache" "Caching routes"
+    execute_with_loading "$artisan_cmd_prefix view:cache" "Caching views"
+    # execute_with_loading "$artisan_cmd_prefix event:cache" "Caching events" # If using event discovery
 
-    # Add explicit completion message
     print_success "Laravel configuration phase completed successfully!"
 }
 
 check_dns() {
-    print_step "10" "DNS VERIFICATION"
+    print_step "10" "DNS VERIFICATION" # Step number consistent for install
 
     local server_ip
-    server_ip=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 ipinfo.io/ip || echo "Unable to detect")
+    # Try multiple methods to get public IP
+    server_ip=$(curl -s --connect-timeout 5 https://ifconfig.me || curl -s --connect-timeout 5 https://api.ipify.org || curl -s --connect-timeout 5 https://ipinfo.io/ip || echo "Unable to detect server IP automatically")
 
-    print_info "Server IP Address: $server_ip"
+    if [[ "$server_ip" == "Unable to detect server IP automatically" ]]; then
+        print_warning "Could not automatically detect the server's public IP address."
+        print_color $WHITE "Please manually enter this server's public IP address:"
+        read -r server_ip
+        if [[ -z "$server_ip" ]]; then
+            print_error "No IP address entered. DNS check cannot proceed effectively."
+            # Optionally, allow to skip or exit
+            return 1 # Indicate failure or inability to check
+        fi
+    fi
+
+    print_info "This Server's Public IP Address: $server_ip"
     print_info "Domain to configure: $DOMAIN"
+    print_info "Attempting to resolve $DOMAIN..."
+
+    local resolved_ip
+    # Use `getent hosts` or `dig` if available, fallback to `nslookup`
+    if command -v dig &>/dev/null; then
+        resolved_ip=$(dig +short "$DOMAIN" A | tail -n1)
+    elif command -v getent &>/dev/null; then
+        resolved_ip=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -n1)
+    elif command -v nslookup &>/dev/null; then
+        resolved_ip=$(nslookup "$DOMAIN" | awk '/^Address: / { print $2 }' | tail -n1)
+    else
+        print_warning "DNS lookup tools (dig, getent, nslookup) not found. Cannot automatically verify DNS."
+        resolved_ip="unknown"
+    fi
+
+    if [[ "$resolved_ip" == "$server_ip" ]]; then
+        print_success "DNS check successful! $DOMAIN resolves to $server_ip."
+        return 0
+    elif [[ "$resolved_ip" == "unknown" ]]; then
+        print_warning "Could not automatically verify DNS."
+    else
+        print_warning "$DOMAIN currently resolves to $resolved_ip, which does not match this server's IP $server_ip."
+    fi
 
     while true; do
-        print_color $WHITE "🌐 Have you pointed $DOMAIN to this server's IP ($server_ip)? (y/n):"
+        print_color $WHITE "🌐 Have you pointed an A record for '$DOMAIN' to this server's IP ($server_ip)? (y/n):"
         read -r dns_response
         case $dns_response in
         [Yy] | [Yy][Ee][Ss] | [Yy][Ee])
-            print_success "DNS configuration confirmed!"
+            print_success "DNS configuration acknowledged by user."
             break
             ;;
         [Nn] | [Nn][Oo])
             print_warning "Please configure your DNS settings:"
-            print_info "1. Log into your domain registrar or DNS provider"
-            print_info "2. Create an A record pointing $DOMAIN to $server_ip"
-            print_info "3. Wait for DNS propagation (usually 5-30 minutes)"
-            print_color $WHITE "Press Enter when DNS is configured..."
+            print_info "1. Log into your domain registrar or DNS provider."
+            print_info "2. Create or update an A record for '$DOMAIN' to point to '$server_ip'."
+            print_info "3. Wait for DNS propagation (can take from minutes to hours)."
+            print_color $WHITE "Press Enter to acknowledge and continue, or Ctrl+C to abort and fix DNS first."
             read -r
+            break # Continue after user acknowledgement
             ;;
         *)
-            print_error "Please answer with y/yes or n/no"
+            print_error "Please answer with y/yes or n/no."
             ;;
         esac
     done
+    return 0
 }
 
 prompt_ufw_firewall() {
-    print_step "11" "FIREWALL CONFIGURATION"
+    print_step "11" "FIREWALL CONFIGURATION (UFW)" # Step number consistent for install
 
     if ! command -v ufw &>/dev/null; then
         print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
+        print_info "You may need to configure your firewall manually if one is active."
         return
     fi
 
-    print_color $WHITE "Would you like to automatically configure the firewall (ufw) to allow HTTP/HTTPS traffic? (y/n):"
+    local ufw_status
+    ufw_status=$(ufw status | grep -o "Status: active")
+
+    print_color $WHITE "Would you like to configure the firewall (ufw) to allow HTTP (port 80) and HTTPS (port 443) traffic? (y/n):"
     read -r ufw_choice
     case "$ufw_choice" in
     [Yy] | [Yy][Ee][Ss])
-        print_info "Configuring UFW to allow ports 80 (HTTP) and 443 (HTTPS)..."
-        execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
-        ufw allow 80/tcp >>"$LOG_FILE" 2>&1
-        ufw allow 443/tcp >>"$LOG_FILE" 2>&1
-        ufw reload >>"$LOG_FILE" 2>&1
-        print_success "UFW configured to allow HTTP/HTTPS traffic."
+        print_info "Configuring UFW..."
+        execute_with_loading "ufw allow 22/tcp" "Allowing SSH (port 22)" # Ensure SSH is allowed
+        execute_with_loading "ufw allow 80/tcp" "Allowing HTTP (port 80)"
+        execute_with_loading "ufw allow 443/tcp" "Allowing HTTPS (port 443)"
+
+        if [[ "$ufw_status" != "Status: active" ]]; then
+            # Pass 'y' to the ufw enable prompt if it asks for confirmation
+            print_info "Enabling UFW..."
+            if echo "y" | ufw enable >>"$LOG_FILE" 2>&1; then
+                print_success "UFW enabled and rules applied."
+            else
+                print_error "Failed to enable UFW. Check $LOG_FILE."
+                # Fallback to trying to start if enable failed but rules might be set
+                if systemctl is-active --quiet ufw || systemctl start ufw; then
+                    print_info "UFW service is active/started."
+                else
+                    print_warning "UFW service could not be started."
+                fi
+            fi
+        else
+            execute_with_loading "ufw reload" "Reloading UFW rules"
+            print_success "UFW rules applied (already active)."
+        fi
         ;;
     *)
-        print_warning "Skipped UFW firewall configuration. Make sure ports 80 and 443 are open."
-        print_color $WHITE "Do you want ufw to be started and enabled? (y/n):"
-        read -r ufw_start_choice
-        case "$ufw_start_choice" in
-        [Yy] | [Yy][Ee][Ss])
-            execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
-            print_success "UFW started and enabled, but no ports were opened."
-            ;;
-        *)
-            print_info "UFW will not be started or enabled."
-            ;;
-        esac
+        print_warning "Skipped automatic UFW configuration for HTTP/HTTPS ports."
+        print_info "Ensure ports 80 and 443 (and 22 for SSH) are open in your firewall if UFW is active or if you use another firewall."
+        if [[ "$ufw_status" == "Status: active" ]]; then
+            print_info "UFW is currently active. You may need to add rules manually."
+        else
+            print_info "UFW is currently inactive."
+        fi
         ;;
     esac
 }
 
 setup_ssl() {
-    print_step "12" "SETTING UP SSL CERTIFICATE"
+    # This function is called only if PROTOCOL is "https"
+    print_step "12" "SETTING UP SSL CERTIFICATE (Let's Encrypt with Certbot)" # Step consistent for install
 
-    execute_with_loading "apt-get install -y certbot python3-certbot-nginx" "Installing Certbot"
+    if ! command -v certbot &>/dev/null; then
+        print_info "Certbot not found. Installing Certbot..."
+        # Install certbot and the nginx plugin
+        execute_with_loading "apt-get install -y -qq certbot python3-certbot-nginx" "Installing Certbot and Nginx plugin"
+        if ! command -v certbot &>/dev/null; then
+            print_error "Certbot installation failed. Cannot proceed with SSL setup."
+            print_info "You may need to configure SSL manually or re-run the script after installing Certbot."
+            return 1 # Indicate failure
+        fi
+    fi
 
-    print_info "Obtaining SSL certificate for $DOMAIN..."
+    print_info "Obtaining SSL certificate for $DOMAIN using Certbot with Nginx plugin..."
+    print_warning "Ensure your Nginx configuration for $DOMAIN (port 80) is temporarily active for the challenge."
 
-    cat >/etc/nginx/sites-available/temp-dezerx <<EOF
+    # Create a temporary Nginx config for HTTP challenge if no config exists or to ensure it's clean
+    # This is safer than relying on an existing complex config during initial cert issuance.
+    local temp_nginx_conf_path="/etc/nginx/sites-available/temp-certbot-$DOMAIN.conf"
+    local temp_nginx_symlink="/etc/nginx/sites-enabled/temp-certbot-$DOMAIN.conf"
+
+    cat >"$temp_nginx_conf_path" <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
-    root /var/www/html;
-    index index.html;
-    
-    location / {
-        try_files \$uri \$uri/ =404;
+    root /var/www/html; # A standard temporary root for challenges
+    index index.html index.htm;
+
+    location ~ /.well-known/acme-challenge/ {
+        allow all;
+        root /var/www/html; # Ensure certbot can write here or specify a different challenge path
     }
 }
 EOF
+    mkdir -p /var/www/html # Ensure challenge directory root exists
+    ln -sf "$temp_nginx_conf_path" "$temp_nginx_symlink"
 
-    ln -sf /etc/nginx/sites-available/temp-dezerx /etc/nginx/sites-enabled/temp-dezerx
-    systemctl reload nginx
+    # Test and reload Nginx
+    if ! nginx -t >>"$LOG_FILE" 2>&1; then
+        print_error "Temporary Nginx configuration for Certbot failed test. Check $LOG_FILE."
+        rm -f "$temp_nginx_conf_path" "$temp_nginx_symlink"
+        return 1
+    fi
+    systemctl reload nginx >>"$LOG_FILE" 2>&1
 
-    if ! certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "admin@$DOMAIN" --no-eff-email; then
-        print_error "Failed to obtain SSL certificate"
-        print_info "Please ensure:"
-        print_info "1. Domain $DOMAIN points to this server"
-        print_info "2. Port 80 and 443 are open"
-        print_info "3. No firewall is blocking the connection"
-        exit 1
+    # Request certificate. --nginx plugin will modify the Nginx config.
+    # --no-eff-email to avoid prompts if email is for recovery only.
+    # --agree-tos is required.
+    # --redirect will typically be handled by the main Nginx config later, but --nginx plugin might offer it.
+    # For initial, just get the cert: certbot certonly --nginx -d "$DOMAIN" ...
+    # Or let certbot handle the Nginx config: certbot --nginx -d "$DOMAIN" ...
+    local certbot_email="admin@$DOMAIN" # Default email, user might want to change this
+    print_info "Using email $certbot_email for SSL certificate registration."
+
+    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$certbot_email" --redirect --hsts --uir >>"$LOG_FILE" 2>&1; then
+        print_error "Failed to obtain SSL certificate for $DOMAIN."
+        print_info "Please check the Certbot logs in /var/log/letsencrypt/letsencrypt.log for details."
+        print_info "Common issues:"
+        print_info "1. DNS for $DOMAIN not propagated to this server's IP."
+        print_info "2. Port 80 not open or Nginx not correctly serving the challenge."
+        print_info "3. Rate limits from Let's Encrypt (try again later or use --staging flag for testing)."
+        rm -f "$temp_nginx_conf_path" "$temp_nginx_symlink" # Clean up temp config
+        systemctl reload nginx >>"$LOG_FILE" 2>&1           # Reload Nginx to remove temp config
+        return 1                                            # Indicate failure
     fi
 
-    rm -f /etc/nginx/sites-enabled/temp-dezerx
-    rm -f /etc/nginx/sites-available/temp-dezerx
+    # Certbot --nginx should have updated the main Nginx config or created one.
+    # We will overwrite/create dezerx.conf in configure_nginx, so the temp one can be removed.
+    rm -f "$temp_nginx_conf_path" "$temp_nginx_symlink"
+    # Reload Nginx after Certbot's changes and our cleanup
+    execute_with_loading "systemctl reload nginx" "Reloading Nginx after SSL setup"
 
-    print_success "SSL certificate obtained successfully!"
+    print_success "SSL certificate obtained and configured successfully for $DOMAIN!"
+    return 0
 }
 
 setup_ssl_skip() {
-    print_step "12" "SETTING UP SSL CERTIFICATE"
-
-    print_warning "You selected HTTP. Skipping SSL certificate setup."
+    print_step "12" "SSL CERTIFICATE SETUP" # Step number consistent for install
+    print_warning "You selected HTTP protocol. Skipping SSL certificate setup."
+    print_info "Your site will be served over HTTP, which is insecure. HTTPS is strongly recommended for production."
 }
 
 configure_nginx() {
-    print_step "13" "CONFIGURING NGINX"
+    print_step "13" "CONFIGURING NGINX WEB SERVER" # Step number consistent for install
 
-    print_info "Removing default Nginx configuration..."
+    print_info "Removing default Nginx site configuration (if it exists)..."
     rm -f /etc/nginx/sites-available/default
     rm -f /etc/nginx/sites-enabled/default
 
-    print_info "Creating DezerX Nginx configuration..."
+    local nginx_conf_file="/etc/nginx/sites-available/dezerx.conf"
+    print_info "Creating DezerX Nginx configuration at $nginx_conf_file..."
+
+    # Common Nginx settings
+    local common_nginx_settings
+    common_nginx_settings=$(
+        cat <<EOF
+    root $INSTALL_DIR/public;
+    index index.php index.html index.htm;
+
+    access_log /var/log/nginx/dezerx.app-access.log;
+    error_log  /var/log/nginx/dezerx.app-error.log error;
+
+    client_max_body_size 100m;      # Max upload size
+    client_body_timeout 120s;       # Timeout for reading client body
+
+    # Security headers (can be customized)
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always; # Example CSP
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        try_files \$uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock; # Ensure this matches your PHP-FPM version
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M"; # PHP settings via Nginx
+        fastcgi_param HTTP_PROXY ""; # Clear proxy header
+        fastcgi_intercept_errors off;
+        fastcgi_buffer_size 16k;
+        fastcgi_buffers 4 16k;
+        fastcgi_connect_timeout 300;
+        fastcgi_send_timeout 300;
+        fastcgi_read_timeout 300;
+    }
+
+    # Deny access to .htaccess files (though Nginx doesn't use them)
+    location ~ /\.ht {
+        deny all;
+    }
+
+    # Deny access to .env and other sensitive files
+    location ~ /\.env\$ { deny all; }
+    location ~ /\.git { deny all; }
+    location ~ /composer\.lock\$ { deny all; }
+    location ~ /composer\.json\$ { deny all; }
+EOF
+    )
+
     if [[ "$PROTOCOL" == "https" ]]; then
-        cat >/etc/nginx/sites-available/dezerx.conf <<EOF
+        # Ensure SSL certificate paths are correct (Certbot default)
+        local ssl_cert_path="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+        local ssl_key_path="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+
+        if [[ ! -f "$ssl_cert_path" || ! -f "$ssl_key_path" ]]; then
+            print_error "SSL certificate files not found for $DOMAIN at $ssl_cert_path or $ssl_key_path."
+            print_info "This might happen if SSL setup failed. Please check."
+            # Decide if this is fatal. For now, proceed but Nginx will fail to start/reload.
+        fi
+
+        cat >"$nginx_conf_file" <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
-    return 301 https://\$server_name\$request_uri;
+    # Redirect HTTP to HTTPS
+    return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl http2;
     server_name $DOMAIN;
 
-    root $INSTALL_DIR/public;
-    index index.php;
-
-    access_log /var/log/nginx/dezerx.app-access.log;
-    error_log  /var/log/nginx/dezerx.app-error.log error;
-
-
-    client_max_body_size 100m;
-    client_body_timeout 120s;
-
-    sendfile off;
-
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-    ssl_session_cache shared:SSL:10m;
+    ssl_certificate $ssl_cert_path;
+    ssl_certificate_key $ssl_key_path;
+    
+    # Recommended SSL/TLS settings (from Certbot or Mozilla SSL Config Generator)
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
     ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off; # Consider security implications
 
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header X-Robots-Tag none;
-    add_header Content-Security-Policy "frame-ancestors 'self'";
-    add_header X-Frame-Options DENY;
-    add_header Referrer-Policy same-origin;
+    # HSTS (Strict Transport Security) - uncomment if you are sure about HTTPS only
+    # add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
 
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
-
-    location ~ \.php$ {
-        fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-        fastcgi_index index.php;
-        include fastcgi_params;
-        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        fastcgi_param HTTP_PROXY "";
-        fastcgi_intercept_errors off;
-        fastcgi_buffer_size 16k;
-        fastcgi_buffers 4 16k;
-        fastcgi_connect_timeout 300;
-        fastcgi_send_timeout 300;
-        fastcgi_read_timeout 300;
-        include /etc/nginx/fastcgi_params;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
+$common_nginx_settings
 }
 EOF
-    else
-        cat >/etc/nginx/sites-available/dezerx.conf <<EOF
+    else # HTTP
+        cat >"$nginx_conf_file" <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
-    return 301 http://\$server_name\$request_uri;
-    
-    root $INSTALL_DIR/public;
-    index index.php;
 
-    access_log /var/log/nginx/dezerx.app-access.log;
-    error_log  /var/log/nginx/dezerx.app-error.log error;
-
-    client_max_body_size 100m;
-    client_body_timeout 120s;
-
-    sendfile off;
-
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header X-Robots-Tag none;
-    add_header Content-Security-Policy "frame-ancestors 'self'";
-    add_header X-Frame-Options DENY;
-    add_header Referrer-Policy same-origin;
-
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
-
-    location ~ \.php$ {
-        fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-        fastcgi_index index.php;
-        include fastcgi_params;
-        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        fastcgi_param HTTP_PROXY "";
-        fastcgi_intercept_errors off;
-        fastcgi_buffer_size 16k;
-        fastcgi_buffers 4 16k;
-        fastcgi_connect_timeout 300;
-        fastcgi_send_timeout 300;
-        fastcgi_read_timeout 300;
-        include /etc/nginx/fastcgi_params;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
+$common_nginx_settings
 }
 EOF
     fi
 
-    ln -sf /etc/nginx/sites-available/dezerx.conf /etc/nginx/sites-enabled/dezerx.conf
+    # Enable the site by creating a symlink
+    ln -sf "$nginx_conf_file" "/etc/nginx/sites-enabled/$(basename "$nginx_conf_file")"
 
+    print_info "Testing Nginx configuration..."
     if ! nginx -t >>"$LOG_FILE" 2>&1; then
-        print_error "Nginx configuration test failed"
-        exit 1
+        print_error "Nginx configuration test failed. Check $LOG_FILE for details."
+        nginx -t # Print errors to console as well
+        # Do not exit here, allow user to fix and re-run or debug.
+        # Or, make it fatal:
+        # if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then restore_backup; restore_database; fi
+        # exit 1
+        print_warning "Nginx test failed. The web server might not start correctly."
+    else
+        print_success "Nginx configuration test passed."
     fi
 
-    execute_with_loading "systemctl restart nginx" "Restarting Nginx"
+    execute_with_loading "systemctl restart nginx" "Restarting Nginx service"
 
     print_success "Nginx configured successfully!"
 }
@@ -1535,401 +1752,491 @@ EOF
 install_nodejs_and_build() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
         print_step "14" "INSTALLING NODE.JS AND BUILDING ASSETS"
+    else # update
+        print_step "8" "BUILDING FRONTEND ASSETS"
+    fi
+
+    # Check if Node.js and npm are installed, install if not (especially for fresh install)
+    if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
+        print_info "Node.js or npm not found. Installing Node.js (LTS)..."
+        # Using NodeSource for up-to-date LTS version (e.g., 20.x)
+        execute_with_loading "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -" "Adding Node.js LTS repository"
+        execute_with_loading "apt-get install -y -qq nodejs" "Installing Node.js"
+        if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
+            print_error "Node.js/npm installation failed. Cannot build frontend assets."
+            return 1 # Indicate failure
+        fi
+        print_success "Node.js and npm installed: $(node -v), npm $(npm -v)"
     else
-        print_step "8" "BUILDING ASSETS"
+        print_info "Node.js and npm found: $(node -v), npm $(npm -v)"
     fi
 
-    if [[ "$OPERATION_MODE" == "install" ]]; then
-        execute_with_loading "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -" "Adding Node.js repository"
-        execute_with_loading "apt-get install -y nodejs" "Installing Node.js 20.x"
-    fi
-
-    cd "$INSTALL_DIR"
+    cd "$INSTALL_DIR" || {
+        print_error "Failed to change directory to $INSTALL_DIR"
+        return 1
+    }
 
     if [[ -f "package.json" ]]; then
-        execute_with_loading "npm install" "Installing npm dependencies"
-        execute_with_loading "npm run build" "Building production assets"
-    else
-        print_warning "package.json not found, skipping npm build"
-    fi
+        print_info "Installing npm dependencies (can take a few minutes)..."
+        # Run npm install as www-data if possible, or with --unsafe-perm if running as root and facing permission issues during build scripts
+        local npm_install_cmd="npm install"
+        if id "www-data" &>/dev/null; then
+            execute_with_loading "sudo -u www-data $npm_install_cmd" "Installing npm dependencies as www-data"
+        else
+            print_warning "User www-data not found. Running npm install as current user."
+            execute_with_loading "$npm_install_cmd" "Installing npm dependencies"
+        fi
 
-    print_success "Assets built successfully!"
+        print_info "Building production assets (can take a few minutes)..."
+        local npm_build_cmd="npm run build"
+        if id "www-data" &>/dev/null; then
+            execute_with_loading "sudo -u www-data $npm_build_cmd" "Building assets as www-data"
+        else
+            execute_with_loading "$npm_build_cmd" "Building assets"
+        fi
+        print_success "Frontend assets built successfully!"
+    else
+        print_warning "package.json not found in $INSTALL_DIR. Skipping npm install and build."
+    fi
+    return 0
 }
 
 set_permissions() {
+    local step_num
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "15" "SETTING FILE PERMISSIONS"
+        step_num="15"
+    else # update
+        step_num="9"
+    fi
+    print_step "$step_num" "SETTING FILE PERMISSIONS"
+
+    cd "$INSTALL_DIR" || {
+        print_error "Failed to change directory to $INSTALL_DIR"
+        return 1
+    }
+
+    print_info "Setting ownership to www-data:www-data for $INSTALL_DIR..."
+    if id "www-data" &>/dev/null; then
+        execute_with_loading "chown -R www-data:www-data ." "Setting ownership (chown)" # Use . for current dir
     else
-        print_step "9" "SETTING FILE PERMISSIONS"
+        print_warning "User www-data not found. Skipping chown. Manual permission adjustment might be needed."
     fi
 
-    execute_with_loading "chown -R www-data:www-data $INSTALL_DIR" "Setting ownership to www-data"
-    execute_with_loading "chmod -R 755 $INSTALL_DIR" "Setting base permissions"
-    execute_with_loading "chmod -R 775 $INSTALL_DIR/storage" "Setting storage permissions"
-    execute_with_loading "chmod -R 775 $INSTALL_DIR/bootstrap/cache" "Setting cache permissions"
+    print_info "Setting directory permissions (typically 755 or 775 for storage/cache)..."
+    execute_with_loading "find . -type d -exec chmod 755 {} \;" "Setting directory permissions to 755"
 
-    if [[ "$OPERATION_MODE" == "update" ]]; then
-        print_info "Applying additional permission fixes for update..."
-        execute_with_loading "chown -R www-data:www-data $INSTALL_DIR/*" "Setting ownership on all files"
-        execute_with_loading "chown -R www-data:www-data $INSTALL_DIR/.[^.]*" "Setting ownership on hidden files"
+    print_info "Setting file permissions (typically 644 or 664 for storage/cache)..."
+    execute_with_loading "find . -type f -exec chmod 644 {} \;" "Setting file permissions to 644"
+
+    print_info "Setting specific writable permissions for storage and bootstrap/cache..."
+    if [[ -d "storage" ]]; then
+        execute_with_loading "chmod -R ug+rwx storage" "Setting storage permissions (u+rwx, g+rwx)"
+    fi
+    if [[ -d "bootstrap/cache" ]]; then
+        execute_with_loading "chmod -R ug+rwx bootstrap/cache" "Setting bootstrap/cache permissions (u+rwx, g+rwx)"
+    fi
+
+    # Ensure .env has secure permissions
+    if [[ -f ".env" ]]; then
+        chmod 640 .env >>"$LOG_FILE" 2>&1 # Only owner and group read, owner write
+        if id "www-data" &>/dev/null; then
+            chown "$(id -u):www-data" .env >>"$LOG_FILE" 2>&1 # Owner: current user, Group: www-data
+        fi
     fi
 
     print_success "File permissions set successfully!"
 }
 
 run_migrations() {
+    local step_num
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "16" "RUNNING DATABASE MIGRATIONS"
+        step_num="16"
+    else # update
+        step_num="10"
+    fi
+    print_step "$step_num" "RUNNING DATABASE MIGRATIONS AND SEEDERS"
+
+    cd "$INSTALL_DIR" || {
+        print_error "Failed to change directory to $INSTALL_DIR"
+        return 1
+    }
+
+    local artisan_cmd_prefix=""
+    if id "www-data" &>/dev/null; then
+        artisan_cmd_prefix="sudo -u www-data php artisan"
     else
-        print_step "10" "RUNNING DATABASE MIGRATIONS"
+        artisan_cmd_prefix="php artisan"
+        print_warning "Running artisan commands as current user due to www-data not found."
     fi
 
-    cd "$INSTALL_DIR"
-
+    # Temporarily disable exit on error for migrations/seeding to handle errors gracefully
     set +e
-
     print_info "Running database migrations..."
-    sudo -u www-data php artisan migrate --force >>"$LOG_FILE" 2>&1
+    # --force is needed for production environments
+    eval "$artisan_cmd_prefix migrate --force" >>"$LOG_FILE" 2>&1
     local migrate_exit_code=$?
+    set -e # Re-enable exit on error
 
     if [ $migrate_exit_code -ne 0 ]; then
-        print_error "Database migration failed!"
-        print_error "Migration error details:"
-        tail -20 "$LOG_FILE" | grep -A 10 -B 10 "migrate"
-
-        if [[ "$OPERATION_MODE" == "update" ]]; then
-            if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
-                print_error "Restoring backup due to migration failure..."
-                restore_backup
-            else
-                print_warning "Restore on failure is disabled, skipping backup restore..."
-            fi
+        print_error "Database migration failed! (Exit code: $migrate_exit_code)"
+        print_error "Check $LOG_FILE for detailed migration errors."
+        tail -n 20 "$LOG_FILE" # Show last few lines of log
+        if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
+            print_error "Attempting to restore backup due to migration failure..."
+            restore_backup
+            restore_database
+        else
+            print_warning "Automatic restore is disabled or not applicable. Manual intervention may be required."
         fi
-        exit 1
+        exit 1 # Critical failure
     fi
-
     print_success "Database migrations completed successfully!"
 
-    print_info "Running database seeders..."
-    sudo -u www-data php artisan db:seed --force >>"$LOG_FILE" 2>&1
-    local seed_exit_code=$?
+    if [[ "$OPERATION_MODE" == "install" ]]; then
+        set +e
+        print_info "Running database seeders (for initial setup)..."
+        eval "$artisan_cmd_prefix db:seed --force" >>"$LOG_FILE" 2>&1
+        local seed_exit_code=$?
+        set -e
 
-    if [ $seed_exit_code -ne 0 ]; then
-        print_error "Database seeding failed!"
-        print_error "Seeding error details:"
-        tail -20 "$LOG_FILE" | grep -A 10 -B 10 "seed"
-
-        if [[ "$OPERATION_MODE" == "update" ]]; then
-            if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
-                print_error "Restoring backup due to seeding failure..."
-                restore_backup
-            else
-                print_error "Restore on failure is disabled, skipping backup restore..."
-            fi
+        if [ $seed_exit_code -ne 0 ]; then
+            print_warning "Database seeding failed or had issues (Exit code: $seed_exit_code)."
+            print_warning "This might be normal if seeders are optional or environment-dependent. Check $LOG_FILE."
+            tail -n 20 "$LOG_FILE"
+            # Seeding failure is usually not as critical as migration failure for an update.
+            # For install, it might mean incomplete setup.
+        else
+            print_success "Database seeders completed successfully!"
         fi
-        exit 1
+    else
+        print_info "Skipping database seeders for update mode (usually run only on fresh install)."
     fi
 
-    print_success "Database seeders completed successfully!"
+    # Final permission check after artisan commands
+    set_permissions # Call set_permissions again to ensure everything is correct
 
-    print_info "Verifying file permissions after database operations..."
-    chown -R www-data:www-data "$INSTALL_DIR" 2>/dev/null || true
-
-    set -e
+    print_success "Database operations phase completed."
 }
 
 setup_cron() {
-    print_step "17" "SETTING UP CRON JOBS"
+    print_step "17" "SETTING UP CRON JOBS" # Step number consistent for install
 
-    print_info "Adding Laravel scheduler to crontab..."
+    print_info "Adding Laravel scheduler to crontab for www-data user..."
 
-    local temp_cron_file=$(mktemp)
+    local cron_job_command="* * * * * cd $INSTALL_DIR && /usr/bin/php artisan schedule:run >> /dev/null 2>&1"
+    local user_to_run_cron="www-data"
 
-    if crontab -u www-data -l >"$temp_cron_file" 2>/dev/null; then
-        print_info "Found existing crontab for www-data user"
-    else
-        print_info "No existing crontab for www-data user, creating new one"
-        >"$temp_cron_file"
+    if ! id "$user_to_run_cron" &>/dev/null; then
+        print_warning "User '$user_to_run_cron' not found. Cannot set up user-specific cron job."
+        print_info "You may need to set up the cron job manually: $cron_job_command"
+        return 1
     fi
 
-    if ! grep -q "artisan schedule:run" "$temp_cron_file"; then
-        echo "* * * * * cd $INSTALL_DIR && php artisan schedule:run >> /dev/null 2>&1" >>"$temp_cron_file"
-        if crontab -u www-data "$temp_cron_file"; then
-            print_success "Laravel scheduler added to crontab successfully!"
+    # Check if job already exists for the user
+    if ! (crontab -u "$user_to_run_cron" -l 2>/dev/null | grep -Fq "artisan schedule:run"); then
+        # Add new cron job
+        (
+            crontab -u "$user_to_run_cron" -l 2>/dev/null
+            echo "$cron_job_command"
+        ) | crontab -u "$user_to_run_cron" -
+        if crontab -u "$user_to_run_cron" -l | grep -Fq "artisan schedule:run"; then
+            print_success "Laravel scheduler added to crontab for $user_to_run_cron."
         else
-            print_error "Failed to install crontab for www-data user"
-            rm -f "$temp_cron_file"
-            exit 1
+            print_error "Failed to add Laravel scheduler to crontab for $user_to_run_cron."
         fi
     else
-        print_info "Laravel scheduler already exists in crontab"
+        print_info "Laravel scheduler already exists in crontab for $user_to_run_cron."
     fi
 
-    rm -f "$temp_cron_file"
-
-    # Add certbot renewal cronjob only if https is selected and certbot is installed
+    # Certbot renewal cron job (system-wide, usually handled by certbot package)
     if [[ "$PROTOCOL" == "https" ]] && command -v certbot &>/dev/null; then
-        if ! crontab -l 2>/dev/null | grep -q 'certbot renew --quiet --deploy-hook "systemctl restart nginx"'; then
-            (
-                crontab -l 2>/dev/null
-                echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"'
-            ) | crontab -
-            print_success "Added SSL renewal cronjob for certbot."
+        print_info "Ensuring Certbot auto-renewal cron job/timer is active..."
+        # Certbot package usually sets up a systemd timer or cron job in /etc/cron.d/
+        if systemctl list-timers | grep -q 'certbot.timer'; then
+            print_success "Certbot systemd timer is active."
+            execute_with_loading "systemctl start certbot.timer && systemctl enable certbot.timer" "Ensuring Certbot timer is started and enabled"
+        elif [[ -f /etc/cron.d/certbot ]]; then
+            print_success "Certbot cron job found in /etc/cron.d/certbot."
         else
-            print_info "SSL renewal cronjob for certbot already exists."
+            print_warning "Could not find standard Certbot renewal timer/cron. Adding a basic one."
+            # Add a root cron job for certbot renewal if none found
+            local certbot_renew_job="0 3 * * * /usr/bin/certbot renew --quiet --deploy-hook \"systemctl reload nginx\""
+            if ! (crontab -l 2>/dev/null | grep -Fq "certbot renew"); then
+                (
+                    crontab -l 2>/dev/null
+                    echo "$certbot_renew_job"
+                ) | crontab -
+                print_success "Added basic Certbot renewal cron job to root's crontab."
+            else
+                print_info "A Certbot renewal job seems to exist in root's crontab."
+            fi
         fi
     fi
 
     if systemctl is-active --quiet cron; then
-        print_success "Cron service is running"
+        print_success "Cron service (cronie/fcron) is running."
     else
-        print_warning "Cron service is not running, attempting to start..."
-        if systemctl start cron; then
-            print_success "Cron service started successfully"
+        print_warning "Cron service is not running. Attempting to start..."
+        if systemctl start cron >>"$LOG_FILE" 2>&1 && systemctl enable cron >>"$LOG_FILE" 2>&1; then
+            print_success "Cron service started and enabled successfully."
         else
-            print_error "Failed to start cron service"
-            exit 1
+            print_error "Failed to start or enable cron service. Scheduled tasks may not run."
         fi
     fi
-
-    print_success "Cron job setup completed successfully!"
+    print_success "Cron job setup phase completed."
 }
 
 setup_queue_worker() {
-    print_step "18" "SETTING UP QUEUE WORKER SERVICE"
+    print_step "18" "SETTING UP QUEUE WORKER SERVICE (Systemd)" # Step consistent for install
 
-    print_info "Creating systemd service for queue worker..."
-    cat >/etc/systemd/system/dezerx.service <<EOF
+    local service_name="dezerx-worker" # Changed from dezerx.service to dezerx-worker.service
+    local service_file="/etc/systemd/system/${service_name}.service"
+
+    print_info "Creating systemd service file at $service_file..."
+    # User and Group should be www-data
+    # WorkingDirectory should be $INSTALL_DIR
+    # ExecStart should point to php and artisan queue:work
+    # Ensure --queue names match your application's needs
+    cat >"$service_file" <<EOF
 [Unit]
-Description=Laravel Queue Worker for DezerX
-After=network.target
+Description=DezerX Laravel Queue Worker
+After=network.target mariadb.service redis-server.service # Ensure DB and Redis are up
 
 [Service]
 User=www-data
 Group=www-data
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/php $INSTALL_DIR/artisan queue:work --queue=critical,virtfusion,high,medium,default,low --sleep=3 --tries=3 
+ExecStart=/usr/bin/php $INSTALL_DIR/artisan queue:work --tries=3 --timeout=90 --sleep=3 --queue=default,notifications,emails
 Restart=always
-RestartSec=5
-StartLimitBurst=3
-StartLimitIntervalSec=60
+RestartSec=5s # Restart after 5 seconds if it fails
+
+# Resource limits (optional, adjust as needed)
+# MemoryMax=512M
+# CPUWeight=100
+
 StandardOutput=syslog
 StandardError=syslog
-SyslogIdentifier=dezerx-worker
+SyslogIdentifier=$service_name
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
     execute_with_loading "systemctl daemon-reload" "Reloading systemd daemon"
-    execute_with_loading "systemctl enable dezerx.service" "Enabling DezerX service"
-    execute_with_loading "systemctl start dezerx.service" "Starting DezerX service"
+    execute_with_loading "systemctl enable $service_name" "Enabling $service_name service"
+    execute_with_loading "systemctl restart $service_name" "Starting/Restarting $service_name service" # Use restart to ensure it picks up changes
 
+    if systemctl is-active --quiet "$service_name"; then
+        print_success "$service_name service is active."
+    else
+        print_error "$service_name service failed to start. Check status with: systemctl status $service_name"
+        print_error "Also check logs: journalctl -u $service_name -n 50 --no-pager"
+        # This could be critical, consider if script should exit.
+    fi
     print_success "Queue worker service configured successfully!"
 }
 
 cleanup_backup() {
-    if [[ "$OPERATION_MODE" == "update" && -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
-        print_info "Final permission check after successful update..."
-        chown -R www-data:www-data "$INSTALL_DIR" 2>/dev/null || true
-        chmod -R 755 "$INSTALL_DIR" 2>/dev/null || true
-        chmod -R 775 "$INSTALL_DIR/storage" 2>/dev/null || true
-        chmod -R 775 "$INSTALL_DIR/bootstrap/cache" 2>/dev/null || true
-
-        print_info "Cleaning up backup directory..."
-        rm -rf "$BACKUP_DIR"
-        print_success "Backup cleanup completed"
+    # Only run in update mode, and only if the update was successful (implied by reaching this step)
+    if [[ "$OPERATION_MODE" == "update" ]]; then
+        if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+            print_info "Update appears successful. Cleaning up backup directory..."
+            rm -rf "$BACKUP_DIR"
+            if [[ -n "$DB_BACKUP_FILE" && -f "$DB_BACKUP_FILE" ]]; then # This check is redundant if DB_BACKUP_FILE is inside BACKUP_DIR
+                :                                                       # Already removed by rm -rf "$BACKUP_DIR"
+            fi
+            print_success "Backup directory $BACKUP_DIR (and its contents) cleaned up."
+        else
+            print_info "No backup directory to clean up or backup was not created."
+        fi
     fi
 }
 
 print_summary() {
+    local summary_step_num
+    local info_file_name
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "19" "INSTALLATION COMPLETE"
-
+        summary_step_num="19"
+        info_file_name="INSTALLATION_INFO.txt"
+        print_step "$summary_step_num" "INSTALLATION COMPLETE"
         print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
         print_color $GREEN "║                                                              ║"
         print_color $GREEN "║                 🎉 INSTALLATION SUCCESSFUL! 🎉              ║"
         print_color $GREEN "║                                                              ║"
         print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
-
         print_success "DezerX has been successfully installed!"
-
-        echo ""
-        print_color $CYAN "📊 INSTALLATION DETAILS:"
-        print_info "🌐 URL: ${BOLD}${PROTOCOL}//$DOMAIN${NC}"
-        print_info "📁 Directory: ${BOLD}$INSTALL_DIR${NC}"
-        print_info "🗄️  Database: ${BOLD}$DB_FULL_NAME${NC}"
-        print_info "👤 DB User: ${BOLD}$DB_USER_FULL${NC}"
-        print_info "🔐 DB Password: ${BOLD}$DB_PASSWORD${NC}"
-        print_info "🔑 License Key: ${BOLD}${LICENSE_KEY:0:8}***${NC}"
-
-        echo ""
-        print_color $YELLOW "📋 NEXT STEPS:"
-        print_info "1. Visit ${PROTOCOL}://$DOMAIN to access your DezerX installation"
-        print_info "2. Complete the initial setup wizard"
-        print_info "3. Configure your application settings"
-    else
-        print_step "11" "UPDATE COMPLETE"
-
+    else                      # update
+        summary_step_num="11" # Adjust update step numbers if needed
+        info_file_name="UPDATE_INFO.txt"
+        print_step "$summary_step_num" "UPDATE COMPLETE"
         print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
         print_color $GREEN "║                                                              ║"
         print_color $GREEN "║                      🎉 UPDATE SUCCESSFUL! 🎉               ║"
         print_color $GREEN "║                                                              ║"
         print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
-
         print_success "DezerX has been successfully updated!"
-
-        echo ""
-        print_color $CYAN "📊 UPDATE DETAILS:"
-        print_info "🌐 URL: ${BOLD}${PROTOCOL}://$DOMAIN${NC}"
-        print_info "📁 Directory: ${BOLD}$INSTALL_DIR${NC}"
-        print_info "🗄️  Database: ${BOLD}$DB_FULL_NAME${NC}"
-        print_info "👤 DB User: ${BOLD}$DB_USER_FULL${NC}"
-        print_info "🔑 License Key: ${BOLD}${LICENSE_KEY:0:8}***${NC}"
-
-        echo ""
-        print_color $YELLOW "📋 NEXT STEPS:"
-        print_info "1. Visit ${PROTOCOL}://$DOMAIN to verify your updated installation"
-        print_info "2. Check that all features are working correctly"
-        print_info "3. Clear any browser cache if needed"
     fi
+
+    echo ""
+    print_color $CYAN "📊 DETAILS:"
+    print_info "🌐 URL: ${BOLD}${PROTOCOL}://$DOMAIN${NC}"
+    print_info "📁 Directory: ${BOLD}$INSTALL_DIR${NC}"
+    if [[ "$OPERATION_MODE" == "install" ]]; then
+        print_info "🗄️  Database Name: ${BOLD}$DB_FULL_NAME${NC}"
+        print_info "👤 DB User: ${BOLD}$DB_USER_FULL${NC}"
+        print_info "🔑 DB Password: ${BOLD}(Set during installation - check $INSTALL_DIR/$info_file_name or .env file)${NC}"
+    fi
+    print_info "🔑 License Key: ${BOLD}${LICENSE_KEY:0:8}***${NC}"
+
+    echo ""
+    print_color $YELLOW "📋 NEXT STEPS:"
+    print_info "1. Visit ${PROTOCOL}://$DOMAIN in your browser."
+    if [[ "$OPERATION_MODE" == "install" ]]; then
+        print_info "2. Complete any on-screen setup wizards if applicable."
+    else
+        print_info "2. Verify all features are working as expected after the update."
+    fi
+    print_info "3. Clear your browser cache if you experience any display issues."
 
     echo ""
     print_color $YELLOW "🔧 USEFUL COMMANDS:"
-    print_info "• Check queue worker: systemctl status dezerx"
-    print_info "• Restart queue worker: systemctl restart dezerx"
-    print_info "• View app logs: tail -f $INSTALL_DIR/storage/logs/laravel.log"
-    print_info "• Restart Nginx: systemctl restart nginx"
-    print_info "• View operation log: cat $LOG_FILE"
-    print_info "• Check cron jobs: crontab -u www-data -l"
-    print_info "• View .env file: cat $INSTALL_DIR/.env"
+    print_info "• Check queue worker: ${BOLD}systemctl status dezerx-worker${NC}"
+    print_info "• Restart queue worker: ${BOLD}systemctl restart dezerx-worker${NC}"
+    print_info "• View app logs: ${BOLD}tail -f $INSTALL_DIR/storage/logs/laravel.log${NC}"
+    print_info "• View Nginx access log: ${BOLD}tail -f /var/log/nginx/dezerx.app-access.log${NC}"
+    print_info "• View Nginx error log: ${BOLD}tail -f /var/log/nginx/dezerx.app-error.log${NC}"
+    print_info "• Restart Nginx: ${BOLD}systemctl restart nginx${NC}"
+    print_info "• View this script's operation log: ${BOLD}cat $LOG_FILE${NC}"
+    print_info "• Check cron jobs for www-data: ${BOLD}sudo crontab -u www-data -l${NC}"
+    print_info "• View .env file: ${BOLD}sudo cat $INSTALL_DIR/.env${NC} (handle with care)"
 
     echo ""
-    print_color $CYAN "💡 SUPPORT:"
-    print_info "📚 Documentation: https://docs.dezerx.com"
-    print_info "🎫 Support: https://support.dezerx.com"
+    print_color $CYAN "💡 SUPPORT & DOCUMENTATION:"
+    print_info "📚 DezerX Documentation: https://docs.dezerx.com (replace with actual link)"
+    print_info "🎫 DezerX Support: https://support.dezerx.com (replace with actual link)"
 
     echo ""
-    print_color $GREEN "🚀 Thank you for choosing DezerX!"
+    print_color $GREEN "🚀 Thank you for using DezerX!"
 
-    if [[ "$OPERATION_MODE" == "install" ]]; then
-        cat >"$INSTALL_DIR/INSTALLATION_INFO.txt" <<EOF
-DezerX Installation Information
-==============================
-Installation Date: $(date)
-Domain: $DOMAIN
-Full URL: ${PROTOCOL}://$DOMAIN
-Installation Directory: $INSTALL_DIR
-Database Name: $DB_FULL_NAME
-Database User: $DB_USER_FULL
-Database Password: $DB_PASSWORD
-License Key: $LICENSE_KEY
-Installation Log: $LOG_FILE
+    # Save installation/update details to a file
+    local details_file_path="$INSTALL_DIR/$info_file_name"
+    {
+        echo "DezerX $([[ "$OPERATION_MODE" == "install" ]] && echo "Installation" || echo "Update") Information"
+        echo "=================================================="
+        echo "Date: $(date)"
+        echo "Operation Mode: $OPERATION_MODE"
+        echo "Domain: $DOMAIN"
+        echo "Full URL: ${PROTOCOL}://$DOMAIN"
+        echo "Installation Directory: $INSTALL_DIR"
+        if [[ "$OPERATION_MODE" == "install" ]]; then
+            echo "Database Name: $DB_FULL_NAME"
+            echo "Database User: $DB_USER_FULL"
+            echo "Database Password: $DB_PASSWORD" # Be cautious about logging passwords
+        fi
+        echo "License Key: $LICENSE_KEY" # Also sensitive
+        echo "Script Log File: $LOG_FILE"
+        echo ""
+        echo "Access your installation at: ${PROTOCOL}://$DOMAIN"
+        echo ""
+        echo "Useful Commands (also listed above):"
+        echo "- Check queue worker: systemctl status dezerx-worker"
+        echo "- Restart queue worker: systemctl restart dezerx-worker"
+        # ... (add more commands if desired)
+    } >"$details_file_path"
 
-Access your installation at: ${PROTOCOL}://$DOMAIN
-
-Useful Commands:
-- Check queue worker: systemctl status dezerx
-- Restart queue worker: systemctl restart dezerx
-- View app logs: tail -f $INSTALL_DIR/storage/logs/laravel.log
-- Restart Nginx: systemctl restart nginx
-- Check cron jobs: crontab -u www-data -l
-- View .env file: cat $INSTALL_DIR/.env
-EOF
-    else
-        cat >"$INSTALL_DIR/UPDATE_INFO.txt" <<EOF
-DezerX Update Information
-========================
-Update Date: $(date)
-Domain: $DOMAIN
-Full URL: ${PROTOCOL}://$DOMAIN
-Installation Directory: $INSTALL_DIR
-License Key: $LICENSE_KEY
-Update Log: $LOG_FILE
-
-Access your installation at: ${PROTOCOL}://$DOMAIN
-
-Useful Commands:
-- Check queue worker: systemctl status dezerx
-- Restart queue worker: systemctl restart dezerx
-- View app logs: tail -f $INSTALL_DIR/storage/logs/laravel.log
-- Restart Nginx: systemctl restart nginx
-- Check cron jobs: crontab -u www-data -l
-- View .env file: cat $INSTALL_DIR/.env
-EOF
+    print_info "💾 Operation details saved to: $details_file_path"
+    # Secure the info file if it contains sensitive data
+    chmod 600 "$details_file_path"
+    if id "www-data" &>/dev/null; then
+        chown "$(id -u):www-data" "$details_file_path"
     fi
-
-    print_info "💾 Operation details saved to: $INSTALL_DIR/$(if [[ "$OPERATION_MODE" == "install" ]]; then echo "INSTALLATION_INFO.txt"; else echo "UPDATE_INFO.txt"; fi)"
 }
 
 cleanup_on_error() {
-    print_error "Operation failed at line $1"
-    print_info "Check the operation log: $LOG_FILE"
+    local lineno="$1"
+    local command_that_failed="${BASH_COMMAND}" # Get the command that failed
+    print_error "Operation failed at line $lineno: $command_that_failed"
+    print_error "An error occurred. Please check the script output and the log file: $LOG_FILE"
+    tail -n 30 "$LOG_FILE" # Show last 30 lines of log for quick diagnostics
 
     if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
-        print_error "Attempting to restore from backup..."
-        restore_backup
-        restore_database
-        print_info "Backup restore attempted."
+        print_warning "Attempting to restore from backup due to script error..."
+        restore_backup   # Restore application files
+        restore_database # Restore database
+        print_info "Backup restore attempt finished. Please verify your system."
     else
-        print_info "You may need to clean up partially installed components manually."
+        print_warning "Automatic restore on failure was not enabled or not applicable."
+        print_info "You may need to clean up partially installed/updated components manually."
     fi
     exit 1
 }
 
+# --- Main Script Logic ---
 main() {
-    echo "DezerX $(if [[ "$OPERATION_MODE" == "install" ]]; then echo "Installation"; else echo "Update"; fi) Log - $(date)" >"$LOG_FILE"
+    # Start logging immediately
+    # Ensure LOG_FILE is writable. If running as non-root initially, this might fail.
+    # Script should be run as root, so /tmp/ should be writable.
+    echo "DezerX Script Log - $(date)" >"$LOG_FILE"
+    chmod 644 "$LOG_FILE" # Make log readable by others if needed, or keep it 600 for root only
 
     print_banner
+    # Set up error trapping
     trap 'cleanup_on_error $LINENO' ERR
 
     check_required_commands
-    check_root
-    choose_operation_mode
-    check_system_requirements
+    check_root # Ensures script is run as root from this point
+
+    choose_operation_mode # Sets OPERATION_MODE or exits if user cancels delete confirmation
+
+    # If delete operation was chosen, it handles its own flow and exits.
+    # The choose_operation_mode function will exit if deletion is confirmed and processed.
+    # If deletion is cancelled, it also exits. So, if we reach here, it's install or update.
+
+    check_system_requirements # Exits if requirements not met
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        get_install_input
-        verify_license
+        get_install_input # Exits if user cancels
+        verify_license    # Exits on failure
         install_dependencies
         install_composer
         setup_database
-        download_dezerx
-        configure_laravel
-        check_dns
+        download_dezerx   # Exits on failure
+        configure_laravel # Exits on failure
+        check_dns         # Does not exit by default, user confirms
         prompt_ufw_firewall
         if [[ "$PROTOCOL" == "https" ]]; then
-            setup_ssl
+            setup_ssl # Exits on critical failure
         else
             setup_ssl_skip
         fi
-        configure_nginx
-        install_nodejs_and_build
+        configure_nginx          # Exits on critical failure
+        install_nodejs_and_build # Continues on non-critical failure (e.g. package.json missing)
         set_permissions
-        run_migrations
+        run_migrations # Exits on critical failure
         setup_cron
         setup_queue_worker
+    elif [[ "$OPERATION_MODE" == "update" ]]; then
+        get_update_input         # Exits if user cancels
+        verify_license           # Exits on failure
+        create_backup            # Exits on failure
+        backup_database          # Exits on critical failure
+        download_dezerx          # Exits on failure (triggers restore if enabled)
+        configure_laravel        # Exits on failure (triggers restore if enabled)
+        install_nodejs_and_build # Continues on non-critical failure
+        set_permissions
+        run_migrations # Exits on critical failure (triggers restore if enabled)
+        # Cron and Queue worker setup might need review/restart for updates, but not full re-setup unless changed.
+        # For simplicity, we can re-run them to ensure they are up-to-date.
+        setup_cron
+        setup_queue_worker
+        cleanup_backup # Cleans up backup if update was successful
     else
-        if [[ "$OPERATION_MODE" == "update" ]]; then
-            # UPDATE MODE
-            get_update_input
-            verify_license
-            create_backup
-            backup_database # <--- ADD THIS LINE
-            download_dezerx
-            configure_laravel
-            print_info "DEBUG: configure_laravel completed, continuing..."
-            install_nodejs_and_build
-            set_permissions
-            run_migrations
-            cleanup_backup
-        fi
+        print_error "Invalid operation mode: $OPERATION_MODE. This should not happen."
+        exit 1
     fi
 
     print_summary
-    log_message "Operation completed successfully"
+    log_message "Operation ($OPERATION_MODE) completed successfully."
+    trap - ERR # Disable error trap for clean exit
+    exit 0
 }
-
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
