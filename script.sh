@@ -1349,35 +1349,72 @@ configure_laravel() {
 }
 
 check_dns() {
-    print_step "10" "DNS VERIFICATION"
+    print_step "10" "DNS VERIFICATION" # Step number consistent for install
 
     local server_ip
-    server_ip=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 ipinfo.io/ip || echo "Unable to detect")
+    # Try multiple methods to get public IP
+    server_ip=$(curl -s --connect-timeout 5 https://ifconfig.me || curl -s --connect-timeout 5 https://api.ipify.org || curl -s --connect-timeout 5 https://ipinfo.io/ip || echo "Unable to detect server IP automatically")
 
-    print_info "Server IP Address: $server_ip"
+    if [[ "$server_ip" == "Unable to detect server IP automatically" ]]; then
+        print_warning "Could not automatically detect the server's public IP address."
+        print_color $WHITE "Please manually enter this server's public IP address:"
+        read -r server_ip
+        if [[ -z "$server_ip" ]]; then
+            print_error "No IP address entered. DNS check cannot proceed effectively."
+            # Optionally, allow to skip or exit
+            return 1 # Indicate failure or inability to check
+        fi
+    fi
+
+    print_info "This Server's Public IP Address: $server_ip"
     print_info "Domain to configure: $DOMAIN"
+    print_info "Attempting to resolve $DOMAIN..."
+
+    local resolved_ip
+    # Use `getent hosts` or `dig` if available, fallback to `nslookup`
+    if command -v dig &>/dev/null; then
+        resolved_ip=$(dig +short "$DOMAIN" A | tail -n1)
+    elif command -v getent &>/dev/null; then
+        resolved_ip=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -n1)
+    elif command -v nslookup &>/dev/null; then
+        resolved_ip=$(nslookup "$DOMAIN" | awk '/^Address: / { print $2 }' | tail -n1)
+    else
+        print_warning "DNS lookup tools (dig, getent, nslookup) not found. Cannot automatically verify DNS."
+        resolved_ip="unknown"
+    fi
+
+    if [[ "$resolved_ip" == "$server_ip" ]]; then
+        print_success "DNS check successful! $DOMAIN resolves to $server_ip."
+        return 0
+    elif [[ "$resolved_ip" == "unknown" ]]; then
+        print_warning "Could not automatically verify DNS."
+    else
+        print_warning "$DOMAIN currently resolves to $resolved_ip, which does not match this server's IP $server_ip."
+    fi
 
     while true; do
-        print_color $WHITE "🌐 Have you pointed $DOMAIN to this server's IP ($server_ip)? (y/n):"
+        print_color $WHITE "🌐 Have you pointed an A record for '$DOMAIN' to this server's IP ($server_ip)? (y/n):"
         read -r dns_response
         case $dns_response in
         [Yy] | [Yy][Ee][Ss] | [Yy][Ee])
-            print_success "DNS configuration confirmed!"
+            print_success "DNS configuration acknowledged by user."
             break
             ;;
         [Nn] | [Nn][Oo])
             print_warning "Please configure your DNS settings:"
-            print_info "1. Log into your domain registrar or DNS provider"
-            print_info "2. Create an A record pointing $DOMAIN to $server_ip"
-            print_info "3. Wait for DNS propagation (usually 5-30 minutes)"
-            print_color $WHITE "Press Enter when DNS is configured..."
+            print_info "1. Log into your domain registrar or DNS provider."
+            print_info "2. Create or update an A record for '$DOMAIN' to point to '$server_ip'."
+            print_info "3. Wait for DNS propagation (can take from minutes to hours)."
+            print_color $WHITE "Press Enter to acknowledge and continue, or Ctrl+C to abort and fix DNS first."
             read -r
+            break # Continue after user acknowledgement
             ;;
         *)
-            print_error "Please answer with y/yes or n/no"
+            print_error "Please answer with y/yes or n/no."
             ;;
         esac
     done
+    return 0
 }
 
 prompt_ufw_firewall() {
