@@ -318,6 +318,48 @@ check_system_requirements() {
         print_warning "Low memory detected: ${total_mem}MB. Recommended: 2GB+"
     fi
 
+    # Dependency version checks
+    print_info "Checking dependency versions..."
+
+    # PHP version check
+    if command -v php &>/dev/null; then
+        local php_version
+        php_version=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
+        if [[ $(echo "$php_version < 8.1" | bc) -eq 1 ]]; then
+            print_warning "Detected PHP version $php_version. Recommended: PHP 8.1 or newer."
+        else
+            print_success "PHP version $php_version is supported."
+        fi
+    else
+        print_warning "PHP is not installed yet."
+    fi
+
+    # MariaDB version check
+    if command -v mariadb &>/dev/null; then
+        local mariadb_version
+        mariadb_version=$(mariadb --version | grep -oP 'Ver \K[0-9]+\.[0-9]+' | head -1)
+        if [[ -n "$mariadb_version" && $(echo "$mariadb_version < 10.5" | bc) -eq 1 ]]; then
+            print_warning "Detected MariaDB version $mariadb_version. Recommended: MariaDB 10.5 or newer."
+        else
+            print_success "MariaDB version $mariadb_version is supported."
+        fi
+    else
+        print_warning "MariaDB is not installed yet."
+    fi
+
+    # Node.js version check
+    if command -v node &>/dev/null; then
+        local node_version
+        node_version=$(node -v | sed 's/v//')
+        if [[ $(echo "$node_version < 18" | bc) -eq 1 ]]; then
+            print_warning "Detected Node.js version $node_version. Recommended: Node.js 18 or newer."
+        else
+            print_success "Node.js version $node_version is supported."
+        fi
+    else
+        print_warning "Node.js is not installed yet."
+    fi
+
     print_success "System requirements check passed"
 }
 
