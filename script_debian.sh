@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- EARLY SYSTEM CHECK: Redirect Debian users to the Debian script ---
-if [ -f /etc/debian_version ] && grep -Eq '^[0-9]+\.[0-9]+' /etc/debian_version; then
+if [ -f /etc/os_release ] && grep -Eq '^[0-9]+\.[0-9]+' /etc/debian_version; then
     echo "Detected Debian system (version: $(cat /etc/debian_version)). Redirecting to the DezerX Debian installer..."
     exec bash <(curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh)
     exit 0
