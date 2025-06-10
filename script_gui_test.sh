@@ -1,3 +1,4 @@
+#!/bin/bash
 set -euo pipefail
 
 readonly RED='\033[0;31m'
@@ -30,6 +31,22 @@ print_color() {
     printf "${1}${2}${NC}\n"
 }
 
+print_success() {
+    printf "${GREEN}✔ %s${NC}\n" "$1"
+}
+
+print_error() {
+    print_color $RED "❌ $1"
+}
+
+print_info() {
+    print_color $BLUE "ℹ️  $1"
+}
+
+print_warning() {
+    print_color $YELLOW "⚠️  $1"
+}
+
 check_required_commands() {
     local cmds=(curl awk grep sed)
     for cmd in "${cmds[@]}"; do
@@ -51,7 +68,6 @@ show_loading() {
     local frame_count=${#spin_frames[@]}
     local i=0
 
-    # Hide cursor
     tput civis 2>/dev/null || true
 
     while kill -0 "$pid" 2>/dev/null; do
@@ -60,7 +76,6 @@ show_loading() {
         sleep 0.08
     done
 
-    # Show checkmark and restore cursor
     printf "\r${BLUE}%s ${GREEN}✔${NC}\n" "$message"
     tput cnorm 2>/dev/null || true
 }
