@@ -211,6 +211,35 @@ check_root() {
     print_success "Running with root privileges"
 }
 
+choose_install_variant() {
+    print_step "0" "CHOOSE INSTALLATION VARIANT"
+    print_color $CYAN "Please choose the installation variant:"
+    print_color $WHITE "1) 🆕 Normal (without a GUI)"
+    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA)"
+    echo ""
+
+    while true; do
+        print_color $WHITE "Please choose an option (1 or 2):"
+        read -r choice
+        case $choice in
+        1)
+            print_success "Selected: Normal Installation (without GUI)"
+            return 0
+            ;;
+        2)
+            print_success "Selected: GUI Installation (ALPHA)"
+            print_warning "This variant is still in ALPHA stage and may not work as expected."
+            # Download and run the GUI script, then exit this script
+            curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_gui.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+            exit 0
+            ;;
+        *)
+            print_error "Invalid choice. Please enter 1 or 2."
+            ;;
+        esac
+    done
+}
+
 choose_operation_mode() {
     print_step "1" "CHOOSE OPERATION"
 
@@ -2297,78 +2326,60 @@ cleanup_on_error() {
     exit 1
 }
 
-# --- Main Script Logic ---
 main() {
-    echo "DEBUG: Main function entered." // This one was not in the removal list >&2
-    # Start logging immediately
-    echo "DezerX Script Log - $(date)" >"$LOG_FILE" # This should be the first write to the log file.
-    chmod 644 "$LOG_FILE"                           # Make log readable by others if needed, or keep it 600 for root only
+    echo "DezerX $(if [[ "$OPERATION_MODE" == "install" ]]; then echo "Installation"; else echo "Update"; fi) Log - $(date)" >"$LOG_FILE"
 
-    echo "DEBUG: About to print banner in main." // This one was not in the removal list >&2
     print_banner
-    # Set up error trapping
     trap 'cleanup_on_error $LINENO' ERR
 
     check_required_commands
-    check_root # Ensures script is run as root from this point
-
-    choose_operation_mode # Sets OPERATION_MODE or exits if user cancels delete confirmation
-
-    # If delete operation was chosen, it handles its own flow and exits.
-    # The choose_operation_mode function will exit if deletion is confirmed and processed.
-    # If deletion is cancelled, it also exits. So, if we reach here, it's install or update.
-
-    check_system_requirements # Exits if requirements not met
+    check_root
+    choose_install_variant
+    choose_operation_mode
+    check_system_requirements
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        get_install_input # Exits if user cancels
-        verify_license    # Exits on failure
+        get_install_input
+        verify_license
         install_dependencies
         install_composer
         setup_database
-        download_dezerx   # Exits on failure
-        configure_laravel # Exits on failure
-        check_dns         # Does not exit by default, user confirms
+        download_dezerx
+        configure_laravel
+        check_dns
         prompt_ufw_firewall
         if [[ "$PROTOCOL" == "https" ]]; then
-            setup_ssl # Exits on critical failure
+            setup_ssl
         else
             setup_ssl_skip
         fi
-        configure_nginx          # Exits on critical failure
-        install_nodejs_and_build # Continues on non-critical failure (e.g. package.json missing)
+        configure_nginx
+        install_nodejs_and_build
         set_permissions
-        run_migrations # Exits on critical failure
+        run_migrations
         setup_cron
         setup_queue_worker
-    elif [[ "$OPERATION_MODE" == "update" ]]; then
-        get_update_input         # Exits if user cancels
-        verify_license           # Exits on failure
-        create_backup            # Exits on failure
-        backup_database          # Exits on critical failure
-        download_dezerx          # Exits on failure (triggers restore if enabled)
-        configure_laravel        # Exits on failure (triggers restore if enabled)
-        install_nodejs_and_build # Continues on non-critical failure
-        set_permissions
-        run_migrations # Exits on critical failure (triggers restore if enabled)
-        # Cron and Queue worker setup might need review/restart for updates, but not full re-setup unless changed.
-        # For simplicity, we can re-run them to ensure they are up-to-date.
-        setup_cron
-        setup_queue_worker
-        cleanup_backup # Cleans up backup if update was successful
     else
-        print_error "Invalid operation mode: $OPERATION_MODE. This should not happen."
-        exit 1
+        if [[ "$OPERATION_MODE" == "update" ]]; then
+            # UPDATE MODE
+            get_update_input
+            verify_license
+            create_backup
+            backup_database # <--- ADD THIS LINE
+            download_dezerx
+            configure_laravel
+            print_info "DEBUG: configure_laravel completed, continuing..."
+            install_nodejs_and_build
+            set_permissions
+            run_migrations
+            cleanup_backup
+        fi
     fi
 
     print_summary
-    log_message "Operation ($OPERATION_MODE) completed successfully."
-    trap - ERR # Disable error trap for clean exit
-    exit 0
+    log_message "Operation completed successfully"
 }
 
-# Ensure script is not sourced, and run main
-echo "DEBUG: Script execution reached end, about to call main." >&2 # ADD THIS LINE
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
