@@ -10,21 +10,22 @@ curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script.sh -o
 
 ## Features
 
-- **Easy Installation:** Installs all required dependencies, configures Nginx, MariaDB, PHP, Redis, and more.
-- **Update Support:** Seamlessly update existing DezerX installations.
+- **Easy Installation & Update:** Installs all required dependencies, configures Nginx, MariaDB, PHP, Redis, and more. Updates existing installations safely.
 - **Automatic SSL:** Optionally sets up Let's Encrypt SSL certificates for HTTPS.
 - **Backup & Restore:** Backs up your files and database before updating, with optional automatic restore on failure.
 - **Interactive Prompts:** Guides you through license, domain, and configuration steps.
-- **Custom Database Settings:** Choose your own database name, user, and password, or use secure defaults.
+- **Custom Database Settings:** Choose your own database name, user, and password, or use secure defaults. Reads and preserves credentials from your `.env` during updates.
 - **Colorful Output:** Clear, color-coded progress and error messages.
 - **Modern Loader:** Animated spinner and clear success/error indicators.
 - **Safe & Idempotent:** Designed to be re-run safely for updates or repairs.
+- **Uninstall Option:** Clean removal of DezerX, Nginx configs, and database/user.
+- **Server Friendly:** Works on Ubuntu Server (no GUI required), all dialogs are terminal-based.
 
 ---
 
 ## Requirements
 
-- Ubuntu 20.04, 22.04, or newer (Debian-based systems)
+- Ubuntu 20.04, 22.04, 24.04, or newer (Debian-based systems)
 - Root privileges (`sudo` or run as root)
 - A valid DezerX license key
 - A domain name pointed to your server's IP
@@ -56,13 +57,17 @@ curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script.sh -o
 - **SSL issues:**  
   Ensure your domain points to your server and ports 80/443 are open.
 - **Database issues:**  
-  Ensure the database credentials in your `.env` file match what was created during installation.
+  Ensure the database credentials in your `.env` file match what was created during installation or update.  
+  If you see "Access denied" errors, check that the user exists for both `localhost` and `127.0.0.1` and that the password is correct.
 
 ---
 
 ## Uninstall
 
-To remove DezerX and its dependencies, you can manually delete the installation directory and remove related Nginx, MariaDB, and PHP packages.
+DezerX provides an **uninstall/delete option directly in the script**.  
+This feature is currently in **alpha** but works for most use cases and will remove DezerX, its Nginx configs, and the database/user if possible.
+
+To uninstall, simply **run the script again and choose the delete option** from the interactive menu.
 
 ---
 
@@ -81,4 +86,3 @@ You may not copy, distribute, or modify this script for other purposes without e
 **Contributions are welcome** for improving the installation experience, but usage is limited to DezerX customers and partners.
 
 All rights are reserved by the author.
-
