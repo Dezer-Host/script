@@ -6,12 +6,6 @@ One-liner to install or update DezerX for Ubuntu:
 curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script.sh -o /tmp/dx.sh && bash /tmp/dx.sh
 ```
 
-One-liner to install or update DezerX for Debian (ALPHA) (this will later be integrated in the main script):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh
-```
-
 One-liner to install or update DezerX with graphical interface (ALPHA) (this will later be integrated in the main script):
 
 ```bash

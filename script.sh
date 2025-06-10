@@ -1,3 +1,12 @@
+#!/bin/bash
+
+# --- EARLY SYSTEM CHECK: Redirect Debian users to the Debian script ---
+if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
+    echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
+    exec bash <(curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh)
+    exit 0
+fi
+
 set -euo pipefail
 
 readonly RED='\033[0;31m'
