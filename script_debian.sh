@@ -1,4 +1,24 @@
-set -euo pipefail
+#!/bin/bash
+
+# Initial Debug: Script execution started
+echo "DEBUG: Script execution started." >&2
+
+# Define LOG_FILE very early for any initial logging
+LOG_FILE="/tmp/dezerx-install.log"
+
+# Attempt to set pipefail, but don't error if not supported
+if (set -o pipefail 2>/dev/null); then
+    set -euo pipefail
+    echo "DEBUG: pipefail is supported and set." >&2
+else
+    set -eu # Continue with error checking and unset variable checking
+    # Use direct echo to LOG_FILE as log_message function may not be defined yet
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Warning: set -o pipefail is not supported by this shell. Pipeline behavior might differ." >>"$LOG_FILE"
+    echo "DEBUG: pipefail is NOT supported. Using set -eu." >&2
+fi
+
+# Initial Debug: Shell options set.
+echo "DEBUG: Shell options processed." >&2
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[1;32m'
@@ -9,7 +29,7 @@ readonly CYAN='\033[0;36m'
 readonly WHITE='\033[1;37m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
-readonly SCRIPT_VERSION="0.5 ALPHA"
+readonly SCRIPT_VERSION="0.5 ALPHA" # As per your context
 
 LICENSE_KEY=""
 DOMAIN=""
@@ -19,25 +39,30 @@ DB_NAME_PREFIX=""
 DB_FULL_NAME=""
 DB_USER_FULL=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="/tmp/dezerx-install.log"
+# LOG_FILE already defined above
 OPERATION_MODE=""
 BACKUP_DIR=""
 DB_BACKUP_FILE=""
 RESTORE_ON_FAILURE=""
 PROTOCOL="https"
 
+# Initial Debug: Variables initialized.
+echo "DEBUG: Global variables initialized." >&2
+
 print_color() {
     printf "${1}${2}${NC}\n"
 }
 
 check_required_commands() {
+    echo "DEBUG: Entered check_required_commands." >&2
     local cmds=(curl awk grep sed)
     for cmd in "${cmds[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
-            print_error "Required command '$cmd' not found. Please install it."
+            print_error "Required command '$cmd' not found. Please install it." # print_error uses print_color
             exit 1
         fi
     done
+    echo "DEBUG: Finished check_required_commands." >&2
 }
 
 log_message() {
@@ -45,24 +70,7 @@ log_message() {
 }
 
 show_loading() {
-    local pid=$1
-    local message=$2
-    local spin_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    local frame_count=${#spin_frames[@]}
-    local i=0
-
-    # Hide cursor
-    tput civis 2>/dev/null || true
-
-    while kill -0 "$pid" 2>/dev/null; do
-        printf "\r${BLUE}%s %s${NC} " "$message" "${spin_frames[$i]}"
-        i=$(((i + 1) % frame_count))
-        sleep 0.08
-    done
-
-    # Show checkmark and restore cursor
-    printf "\r${BLUE}%s ${GREEN}✔${NC}\n" "$message"
-    tput cnorm 2>/dev/null || true
+    # ...existing code...
 }
 
 execute_with_loading() {
@@ -70,6 +78,11 @@ execute_with_loading() {
     local message="$2"
 
     log_message "Executing: $command"
+    # Make eval safer by ensuring command is not empty
+    if [[ -z "$command" ]]; then
+        print_error "execute_with_loading received an empty command for message: $message"
+        return 1 # Or exit, depending on desired strictness
+    fi
     eval "$command" >>"$LOG_FILE" 2>&1 &
     local pid=$!
     show_loading $pid "$message"
@@ -77,8 +90,11 @@ execute_with_loading() {
     local exit_code=$?
 
     if [ $exit_code -ne 0 ]; then
-        print_error "Command failed: $command"
+        print_error "Command failed (exit code $exit_code): $command" # Added exit code
         print_error "Check log file: $LOG_FILE"
+        # Consider not exiting here directly but returning the error,
+        # letting the caller decide, or rely on the ERR trap.
+        # For now, keeping the exit as it was.
         exit $exit_code
     fi
 
@@ -86,7 +102,10 @@ execute_with_loading() {
 }
 
 print_banner() {
-    clear
+    echo "DEBUG: Entered print_banner." >&2
+    # Make clear command more fault-tolerant
+    command clear 2>/dev/null || printf '\033c' || echo "--- Attempted to clear screen ---"
+
     print_color $CYAN "
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
@@ -105,6 +124,7 @@ print_banner() {
     print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 1-3 minutes (update)"
     print_color $YELLOW "📝 Operation log: $LOG_FILE"
     echo ""
+    echo "DEBUG: Finished print_banner." >&2
 }
 
 print_step() {
@@ -2173,19 +2193,23 @@ cleanup_on_error() {
 
 # --- Main Script Logic ---
 main() {
+    echo "DEBUG: Main function entered." >&2
     # Start logging immediately
-    # Ensure LOG_FILE is writable. If running as non-root initially, this might fail.
-    # Script should be run as root, so /tmp/ should be writable.
-    echo "DezerX Script Log - $(date)" >"$LOG_FILE"
-    chmod 644 "$LOG_FILE" # Make log readable by others if needed, or keep it 600 for root only
+    echo "DezerX Script Log - $(date)" >"$LOG_FILE" # This should be the first write to the log file.
+    chmod 644 "$LOG_FILE"                           # Make log readable by others if needed, or keep it 600 for root only
 
+    echo "DEBUG: About to print banner in main." >&2
     print_banner
     # Set up error trapping
     trap 'cleanup_on_error $LINENO' ERR
+    echo "DEBUG: ERR trap set." >&2
 
+    echo "DEBUG: About to check required commands in main." >&2
     check_required_commands
+    echo "DEBUG: About to check root in main." >&2
     check_root # Ensures script is run as root from this point
 
+    echo "DEBUG: About to choose operation mode in main." >&2
     choose_operation_mode # Sets OPERATION_MODE or exits if user cancels delete confirmation
 
     # If delete operation was chosen, it handles its own flow and exits.
