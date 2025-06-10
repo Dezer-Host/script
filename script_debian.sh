@@ -972,7 +972,8 @@ install_dependencies() {
     fi
 
     print_info "Adding Redis repository..."
-    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg >>"$LOG_FILE" 2>&1
+    # Add --yes to gpg to auto-overwrite if the key file exists
+    curl -fsSL https://packages.redis.io/gpg | gpg --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg >>"$LOG_FILE" 2>&1
     echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" >/etc/apt/sources.list.d/redis.list
 
     print_info "Adding MariaDB repository..."
