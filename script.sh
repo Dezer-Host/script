@@ -102,7 +102,7 @@ print_banner() {
 ╚══════════════════════════════════════════════════════════════╝
 "
     print_color $YELLOW "📋 This script can install or update DezerX"
-    print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 3-5 minutes (update)"
+    print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 1-3 minutes (update)"
     print_color $YELLOW "📝 Operation log: $LOG_FILE"
     echo ""
 }
@@ -1389,13 +1389,13 @@ EOF
 }
 
 setup_ssl_skip() {
-    print_step "13" "SETTING UP SSL CERTIFICATE"
+    print_step "12" "SETTING UP SSL CERTIFICATE"
 
     print_warning "You selected HTTP. Skipping SSL certificate setup."
 }
 
 configure_nginx() {
-    print_step "14" "CONFIGURING NGINX"
+    print_step "13" "CONFIGURING NGINX"
 
     print_info "Removing default Nginx configuration..."
     rm -f /etc/nginx/sites-available/default
@@ -1534,9 +1534,9 @@ EOF
 
 install_nodejs_and_build() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "15" "INSTALLING NODE.JS AND BUILDING ASSETS"
+        print_step "14" "INSTALLING NODE.JS AND BUILDING ASSETS"
     else
-        print_step "15" "BUILDING ASSETS"
+        print_step "8" "BUILDING ASSETS"
     fi
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
@@ -1558,9 +1558,9 @@ install_nodejs_and_build() {
 
 set_permissions() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "16" "SETTING FILE PERMISSIONS"
+        print_step "15" "SETTING FILE PERMISSIONS"
     else
-        print_step "16" "SETTING FILE PERMISSIONS"
+        print_step "9" "SETTING FILE PERMISSIONS"
     fi
 
     execute_with_loading "chown -R www-data:www-data $INSTALL_DIR" "Setting ownership to www-data"
@@ -1579,9 +1579,9 @@ set_permissions() {
 
 run_migrations() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "17" "RUNNING DATABASE MIGRATIONS"
+        print_step "16" "RUNNING DATABASE MIGRATIONS"
     else
-        print_step "17" "RUNNING DATABASE MIGRATIONS"
+        print_step "10" "RUNNING DATABASE MIGRATIONS"
     fi
 
     cd "$INSTALL_DIR"
@@ -1639,7 +1639,7 @@ run_migrations() {
 }
 
 setup_cron() {
-    print_step "18" "SETTING UP CRON JOBS"
+    print_step "17" "SETTING UP CRON JOBS"
 
     print_info "Adding Laravel scheduler to crontab..."
 
@@ -1696,7 +1696,7 @@ setup_cron() {
 }
 
 setup_queue_worker() {
-    print_step "19" "SETTING UP QUEUE WORKER SERVICE"
+    print_step "18" "SETTING UP QUEUE WORKER SERVICE"
 
     print_info "Creating systemd service for queue worker..."
     cat >/etc/systemd/system/dezerx.service <<EOF
@@ -1744,7 +1744,7 @@ cleanup_backup() {
 
 print_summary() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "20" "INSTALLATION COMPLETE"
+        print_step "19" "INSTALLATION COMPLETE"
 
         print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
         print_color $GREEN "║                                                              ║"
@@ -1769,7 +1769,7 @@ print_summary() {
         print_info "2. Complete the initial setup wizard"
         print_info "3. Configure your application settings"
     else
-        print_step "20" "UPDATE COMPLETE"
+        print_step "11" "UPDATE COMPLETE"
 
         print_color $GREEN "
 ╔══════════════════════════════════════════════════════════════╗
