@@ -1259,6 +1259,18 @@ download_dezerx() {
         exit 1
     fi
 
+    print_info "Setting initial ownership and permissions for $INSTALL_DIR to allow www-data operations..."
+    if id "www-data" &>/dev/null; then
+        # Change ownership of the entire installation directory to www-data
+        chown -R www-data:www-data "$INSTALL_DIR" >>"$LOG_FILE" 2>&1
+        # Ensure the www-data user (now owner) can write to the top-level $INSTALL_DIR
+        # This allows composer to create the vendor/ directory inside $INSTALL_DIR.
+        # set_permissions will refine permissions for subdirectories and files later.
+        chmod u+rwx "$INSTALL_DIR" >>"$LOG_FILE" 2>&1
+    else
+        print_warning "User www-data not found. Skipping initial chown/chmod for $INSTALL_DIR. Composer may fail."
+    fi
+
     rm -rf "$temp_extract_dir" # Clean up temporary extraction directory
 
     if [[ "$OPERATION_MODE" == "install" && ! -f "$INSTALL_DIR/.env.example" ]]; then
