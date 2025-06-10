@@ -241,9 +241,9 @@ choose_operation_mode() {
             OPERATION_MODE="delete"
             print_success "Selected: Delete Installation"
             print_warning "This will remove DezerX and all its data permanently!"
-            print_color $WHITE "Are you sure you want to delete the installation? Type 'yes continue' to confirm:"
+            print_color $WHITE "Are you sure you want to delete the installation? Type 'DELETE EVERYTHING' to confirm:"
             read -r confirm_delete
-            if [[ "$confirm_delete" == "yes continue" ]]; then
+            if [[ "$confirm_delete" == "DELETE EVERYTHING" ]]; then
                 print_info "Proceeding with deletion..."
                 local deletion_error=0
 
