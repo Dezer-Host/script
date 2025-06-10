@@ -8,7 +8,7 @@
 - GUI installation option: Users can now choose a graphical (dialog-based) installer (ALPHA).
 - Uninstall option: Added a script option for clean removal of DezerX, its configs, and database.
 - Automatic SSL renewal: Added a cron job for `certbot renew` with Nginx reload.
-- Optional UFW firewall configuration: Prompt to configure UFW for HTTP/HTTPS ports.
+- nftables firewall configuration: Added prompt and logic to configure nftables for HTTP/HTTPS/SSH ports on Debian.
 - Backup and restore: Automatic backup of files and database before updates, with restore on failure.
 - Interactive prompts: Improved user guidance for license, domain, and configuration steps.
 - Colorful and modern output: Enhanced color-coded messages and animated loader.
@@ -25,6 +25,7 @@
 - Nginx configuration: More robust and secure default config, with automatic SSL and HTTP/2.
 - Database setup: Improved checks and error handling for MariaDB user/database creation.
 - Improved uninstall process for more thorough cleanup.
+- Firewall logic: Switched from UFW to nftables as the default firewall configuration on Debian.
 
 ### Fixed
 
@@ -36,6 +37,7 @@
 ### Removed
 
 - Manual intervention for most common install/update errors.
+- UFW as default firewall configuration on Debian (now uses nftables).
 
 ---
 
