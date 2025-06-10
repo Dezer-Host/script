@@ -1320,68 +1320,55 @@ update_env_file() {
     local target_env_file="$3"
     local backup_file_path
 
-    # RESTORE_ON_FAILURE is a global variable set by choose_operation_mode
-
     if [[ ! -f "$target_env_file" ]]; then
         print_error "Cannot update .env: File not found at $target_env_file"
         return 1
     fi
 
-    # More specific backup name including the key
     backup_file_path="${target_env_file}.bak-$(date +%s)-${key_to_update}"
     cp "$target_env_file" "$backup_file_path"
 
-    local sed_escaped_value
-    # Escape for sed's RHS: & / \ and quotes. Also handle newlines if they were intended.
-    # This version assumes simple string values typical for .env, not multi-line values.
-    sed_escaped_value=$(printf '%s' "$value_to_set" |
-        sed -e 's/\\/\\\\/g' -e 's/\//\\\//g' -e 's/&/\\&/g' -e 's/"/\\"/g' -e "s/'/\\'/g" -e 's/\[/\\[/g' -e 's/\]/\\]/g' -e 's/\*/\\*/g' -e 's/\./\\./g' -e 's/\^/\\^/g' -e 's/\$/\\$/g')
-
-    if grep -q -E "^${key_to_update}=" "$target_env_file"; then
-        # Key exists, update it.
-        sed -i -E "s|^(${key_to_update}=).*|\1${sed_escaped_value}|" "$target_env_file"
-        log_message "Updated ${key_to_update} in $target_env_file"
-    else
-        # Key does not exist, but there may be commented or empty lines. Remove any such lines first.
-        sed -i -E "/^${key_to_update}=.*$/d" "$target_env_file"
-        echo "${key_to_update}=${value_to_set}" >>"$target_env_file"
-        log_message "Added ${key_to_update} to $target_env_file"
+    # Ensure .env ends with a newline
+    if [[ $(
+        tail -c1 "$target_env_file"
+        echo x
+    ) != $'\nx' ]]; then
+        echo >>"$target_env_file"
     fi
+
+    # Remove all lines for the key, then add the new value
+    sed -i -E "/^${key_to_update}=.*$/d" "$target_env_file"
+    echo "${key_to_update}=${value_to_set}" >>"$target_env_file"
+    log_message "Set ${key_to_update} in $target_env_file"
 
     # Verify change by reading the value back using get_env_variable
     local current_value
     current_value=$(get_env_variable "$key_to_update" "$target_env_file")
 
-    # ---- START DEBUG ----
     log_message "DEBUG: update_env_file verification for key '$key_to_update'"
     log_message "DEBUG: value_to_set (raw): [$value_to_set]"
     log_message "DEBUG: current_value (from get_env_variable): [$current_value]"
-    # ---- END DEBUG ----
 
     if [[ "$current_value" == "$value_to_set" ]]; then
         print_info "Successfully updated/added '$key_to_update' in $target_env_file."
-        rm -f "$backup_file_path" # Remove local backup on success
+        rm -f "$backup_file_path"
         return 0
     else
         print_error "Failed to verify update for '$key_to_update' in $target_env_file."
         print_error "Expected: '$value_to_set', Got: '$current_value'"
-
-        # Check the global RESTORE_ON_FAILURE variable for this local restore
         if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
             if [[ -f "$backup_file_path" ]]; then
                 mv "$backup_file_path" "$target_env_file"
                 print_info "Restored $target_env_file from local backup $backup_file_path (due to failed verification for '$key_to_update')."
             else
-                # This case should ideally not happen if cp succeeded.
                 print_error "Local backup file $backup_file_path not found. Cannot restore $target_env_file for this key."
             fi
         else
             print_warning "Local .env update verification failed for '$key_to_update'."
             print_warning "Automatic restore of this specific change is disabled by user preference (RESTORE_ON_FAILURE=no)."
             print_warning "The .env file may be in an inconsistent state for this key. The local backup is at $backup_file_path."
-            # Do not restore, but keep the local backup file for manual inspection/restore.
         fi
-        return 1 # Indicate failure to update this specific key as expected
+        return 1
     fi
 }
 
