@@ -8,6 +8,11 @@ curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script.sh -o
 
 ---
 
+**See what's new:**  
+👉 [Changelog](./CHANGELOG.md)
+
+---
+
 ## Features
 
 - **Easy Installation & Update:** Installs all required dependencies, configures Nginx, MariaDB, PHP, Redis, and more. Updates existing installations safely.
