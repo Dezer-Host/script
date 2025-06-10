@@ -809,7 +809,7 @@ get_env_variable() {
         # 4. Remove surrounding quotes (single or double) if present.
         # 5. Remove inline comments (starting with a space then '#').
         # 6. Remove DOS carriage return.
-        value=$(grep "^${var_name}=" "$env_file" | cut -d '=' -f 2- |
+        value=$(grep "^${var_name}=" "$env_file" | tail -n 1 | cut -d '=' -f 2- |
             sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
                 -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/" \
                 -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' \
@@ -1338,11 +1338,12 @@ update_env_file() {
         sed -e 's/\\/\\\\/g' -e 's/\//\\\//g' -e 's/&/\\&/g' -e 's/"/\\"/g' -e "s/'/\\'/g" -e 's/\[/\\[/g' -e 's/\]/\\]/g' -e 's/\*/\\*/g' -e 's/\./\\./g' -e 's/\^/\\^/g' -e 's/\$/\\$/g')
 
     if grep -q -E "^${key_to_update}=" "$target_env_file"; then
-        # Key exists, update it. Using -E for extended regex to capture the key reliably.
+        # Key exists, update it.
         sed -i -E "s|^(${key_to_update}=).*|\1${sed_escaped_value}|" "$target_env_file"
         log_message "Updated ${key_to_update} in $target_env_file"
     else
-        # Key does not exist, add it. Ensure value_to_set is used directly here, not sed_escaped_value.
+        # Key does not exist, but there may be commented or empty lines. Remove any such lines first.
+        sed -i -E "/^${key_to_update}=.*$/d" "$target_env_file"
         echo "${key_to_update}=${value_to_set}" >>"$target_env_file"
         log_message "Added ${key_to_update} to $target_env_file"
     fi
