@@ -1923,10 +1923,11 @@ install_nodejs_and_build() {
         return 1
     }
 
-    # Fix npm cache permissions if needed
-    if [[ -d "/var/www/.npm" ]]; then
-        chown -R www-data:www-data /var/www/.npm
+    # Ensure npm cache directory exists and is owned by www-data
+    if [[ ! -d "/var/www/.npm" ]]; then
+        mkdir -p /var/www/.npm
     fi
+    chown -R www-data:www-data /var/www/.npm
 
     # Clean up node_modules and package-lock.json before npm install
     if [[ -d "node_modules" ]]; then
