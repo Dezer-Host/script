@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# Initial Debug: Script execution started
-echo "DEBUG: Script execution started." >&2
-
-# Define LOG_FILE very early for any initial logging
-LOG_FILE="/tmp/dezerx-install.log"
-
 # Attempt to set pipefail, but don't error if not supported
 if (set -o pipefail 2>/dev/null); then
     set -euo pipefail
@@ -16,9 +10,6 @@ else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Warning: set -o pipefail is not supported by this shell. Pipeline behavior might differ." >>"$LOG_FILE"
     echo "DEBUG: pipefail is NOT supported. Using set -eu." >&2
 fi
-
-# Initial Debug: Shell options set.
-echo "DEBUG: Shell options processed." >&2
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[1;32m'
@@ -31,6 +22,7 @@ readonly BOLD='\033[1m'
 readonly NC='\033[0m'
 readonly SCRIPT_VERSION="0.5 ALPHA" # As per your context
 
+LOG_FILE="/tmp/dezerx-install.log"
 LICENSE_KEY=""
 DOMAIN=""
 INSTALL_DIR=""
