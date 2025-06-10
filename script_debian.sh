@@ -1049,14 +1049,15 @@ install_dependencies() {
     execute_with_loading "apt-get update -qq" "Updating package lists with new repositories"
 
     local php_version="8.3" # Define PHP version
-    local app_packages="nginx php${php_version} php${php_version}-common php${php_version}-cli php${php_version}-gd php${php_version}-mysql php${php_version}-mbstring php${php_version}-bcmath php${php_version}-xml php${php_version}-fpm php${php_version}-curl php${php_version}-zip mariadb-server mariadb-client tar unzip git redis-server ufw"
+    local app_packages="nginx php${php_version} php${php_version}-common php${php_version}-cli php${php_version}-gd php${php_version}-mysql php${php_version}-mbstring php${php_version}-bcmath php${php_version}-xml php${php_version}-fpm php${php_version}-curl php${php_version}-zip mariadb-server mariadb-client tar unzip git redis-server nftables"
 
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $app_packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
 
     execute_with_loading "systemctl start nginx && systemctl enable nginx" "Starting and enabling Nginx"
-    execute_with_loading "systemctl start php${php_version}-fpm && systemctl enable php${php_version}-fpm" "Starting and enabling PHP-FPM"
-    execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis"
+    execute_with_loading "systemctl start php${php_version}-fpm && systemctl enable php${php_version}-fpm" "Starting and enabling PHP-FPM service"
+    execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis service"
     execute_with_loading "systemctl start cron && systemctl enable cron" "Starting and enabling Cron service"
+    execute_with_loading "systemctl stop nftables && systemctl disable nftables" "Stoping and Disableing nftables service"
 
     # UFW is handled later in prompt_ufw_firewall, ensure it's not prematurely blocking if already active.
     # If UFW is active and enabled, new rules for HTTP/S will be added. If not, user is prompted.
@@ -1624,57 +1625,57 @@ check_dns() {
     return 0
 }
 
-#prompt_ufw_firewall() {
-#    print_step "11" "FIREWALL CONFIGURATION (UFW)" # Step number consistent for install
-#
-#    if ! command -v ufw &>/dev/null; then
-#        print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
-#        print_info "You may need to configure your firewall manually if one is active."
-#        return
-#    fi
-#
-#    local ufw_status
-#    ufw_status=$(ufw status | grep -o "Status: active")
-#
-#    print_color $WHITE "Would you like to configure the firewall (ufw) to allow HTTP (port 80) and HTTPS (port 443) traffic? (y/n):"
-#    read -r ufw_choice
-#    case "$ufw_choice" in
-#    [Yy] | [Yy][Ee][Ss])
-#        print_info "Configuring UFW..."
-#        execute_with_loading "ufw allow 22/tcp" "Allowing SSH (port 22)" # Ensure SSH is allowed
-#        execute_with_loading "ufw allow 80/tcp" "Allowing HTTP (port 80)"
-#        execute_with_loading "ufw allow 443/tcp" "Allowing HTTPS (port 443)"
-#
-#        if [[ "$ufw_status" != "Status: active" ]]; then
-#            # Pass 'y' to the ufw enable prompt if it asks for confirmation
-#            print_info "Enabling UFW..."
-#            if echo "y" | ufw enable >>"$LOG_FILE" 2>&1; then
-#                print_success "UFW enabled and rules applied."
-#            else
-#                print_error "Failed to enable UFW. Check $LOG_FILE."
-#                # Fallback to trying to start if enable failed but rules might be set
-#                if systemctl is-active --quiet ufw || systemctl start ufw; then
-#                    print_info "UFW service is active/started."
-#                else
-#                    print_warning "UFW service could not be started."
-#                fi
-#            fi
-#        else
-#            execute_with_loading "ufw reload" "Reloading UFW rules"
-#            print_success "UFW rules applied (already active)."
-#        fi
-#        ;;
-#    *)
-#        print_warning "Skipped automatic UFW configuration for HTTP/HTTPS ports."
-#        print_info "Ensure ports 80 and 443 (and 22 for SSH) are open in your firewall if UFW is active or if you use another firewall."
-#        if [[ "$ufw_status" == "Status: active" ]]; then
-#            print_info "UFW is currently active. You may need to add rules manually."
-#        else
-#            print_info "UFW is currently inactive."
-#        fi
-#        ;;
-#    esac
-#}
+configure_firewall() {
+    print_step "11" "FIREWALL CONFIGURATION (nftables)"
+
+    if ! command -v nft &>/dev/null; then
+        print_warning "nftables is not installed. Skipping firewall configuration."
+        print_info "You may need to configure your firewall manually if one is active."
+        return
+    fi
+
+    print_color $WHITE "Would you like to configure the firewall (nftables) to allow HTTP (port 80) and HTTPS (port 443) traffic? (y/n):"
+    read -r nft_choice
+    case "$nft_choice" in
+    [Yy] | [Yy][Ee][Ss])
+        print_info "Configuring nftables..."
+
+        # Create a basic filter table and input chain if not present
+        nft list table inet filter >/dev/null 2>&1 || nft add table inet filter
+        nft list chain inet filter input >/dev/null 2>&1 || nft add chain inet filter input { type filter hook input priority 0 \; policy accept \; }
+
+        # Allow SSH, HTTP, and HTTPS
+        nft add rule inet filter input tcp dport 22 accept 2>/dev/null || true
+        nft add rule inet filter input tcp dport 80 accept 2>/dev/null || true
+        nft add rule inet filter input tcp dport 443 accept 2>/dev/null || true
+
+        print_success "nftables rules added for SSH (22), HTTP (80), and HTTPS (443)."
+
+        # Ensure nftables is enabled and started
+        execute_with_loading "systemctl enable nftables" "Enabling nftables service"
+        execute_with_loading "systemctl start nftables" "Starting nftables service"
+
+        print_info "Current nftables rules:"
+        nft list ruleset
+        ;;
+    *)
+        print_warning "Skipped automatic nftables configuration for HTTP/HTTPS ports."
+        print_info "Ensure ports 80 and 443 (and 22 for SSH) are open in your firewall if nftables is active or if you use another firewall."
+        print_color $WHITE "Would you like to enable and start nftables service anyway? (y/n):"
+        read -r enable_choice
+        case "$enable_choice" in
+            [Yy] | [Yy][Ee][Ss])
+                execute_with_loading "systemctl enable nftables" "Enabling nftables service"
+                execute_with_loading "systemctl start nftables" "Starting nftables service"
+                print_success "nftables service enabled and started."
+                ;;
+            *)
+                print_info "nftables service was not enabled or started."
+                ;;
+        esac
+        ;;
+    esac
+}
 
 setup_ssl() {
     # This function is called only if PROTOCOL is "https"
@@ -2349,7 +2350,7 @@ main() {
         download_dezerx
         configure_laravel
         check_dns
-        # prompt_ufw_firewall
+        configure_firewall
         if [[ "$PROTOCOL" == "https" ]]; then
             setup_ssl
         else
