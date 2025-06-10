@@ -1284,9 +1284,10 @@ download_dezerx() {
 }
 
 update_env_file() {
-    local key_to_update="$1"   # Renamed to avoid conflict
-    local value_to_set="$2"    # Renamed
-    local target_env_file="$3" # Renamed
+    local key_to_update="$1"
+    local value_to_set="$2"
+    local target_env_file="$3"
+    local backup_file_path # Store the specific backup file name
 
     if [[ ! -f "$target_env_file" ]]; then
         print_error "Cannot update .env: File not found at $target_env_file"
@@ -1294,7 +1295,8 @@ update_env_file() {
     fi
 
     # Create a backup before modifying
-    cp "$target_env_file" "${target_env_file}.bak-$(date +%s)"
+    backup_file_path="${target_env_file}.bak-$(date +%s)"
+    cp "$target_env_file" "$backup_file_path"
 
     # Escape value for sed: & / \ need escaping. Also handle newlines if any.
     local escaped_value
@@ -1310,14 +1312,21 @@ update_env_file() {
         log_message "Added ${key_to_update} to $target_env_file"
     fi
 
-    # Verify change (optional, simple check)
+    # Verify change
     if grep -q "^${key_to_update}=${escaped_value}" "$target_env_file"; then
         print_info "Successfully updated/added '$key_to_update' in $target_env_file."
+        rm -f "$backup_file_path" # Remove backup on success
         return 0
     else
         print_error "Failed to verify update for '$key_to_update' in $target_env_file."
         # Restore backup on failure
-        mv "${target_env_file}.bak-$(date +%s)" "$target_env_file" # This backup name needs to be consistent or find last .bak
+        if [[ -f "$backup_file_path" ]]; then
+            mv "$backup_file_path" "$target_env_file"
+            print_info "Restored $target_env_file from backup $backup_file_path."
+        else
+            # This case should ideally not happen if cp succeeded.
+            print_error "Backup file $backup_file_path not found. Cannot restore $target_env_file."
+        fi
         return 1
     fi
 }
@@ -1497,10 +1506,10 @@ configure_laravel() {
     fi
 
     print_info "Optimizing Laravel application..."
-    execute_with_loading "$artisan_cmd_prefix config:cache" "Caching configuration"
-    execute_with_loading "$artisan_cmd_prefix route:cache" "Caching routes"
-    execute_with_loading "$artisan_cmd_prefix view:cache" "Caching views"
-    # execute_with_loading "$artisan_cmd_prefix event:cache" "Caching events" # If using event discovery
+    execute_as_www_data "php artisan config:cache" "Caching configuration"
+    execute_as_www_data "php artisan route:cache" "Caching routes"
+    execute_as_www_data "php artisan view:cache" "Caching views"
+    # execute_as_www_data "php artisan event:cache" "Caching events" # If using event discovery
 
     print_success "Laravel configuration phase completed successfully!"
 }
