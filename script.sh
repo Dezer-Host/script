@@ -148,7 +148,7 @@ choose_operation_mode() {
     print_color $CYAN "What would you like to do?"
     print_color $WHITE "1) 🆕 Fresh Installation - Install DezerX from scratch"
     print_color $WHITE "2) 🔄 Update Existing - Update an existing DezerX installation"
-    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️"
+    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️ (Still a work in progress!)"
     echo ""
 
     while true; do
@@ -247,13 +247,13 @@ choose_operation_mode() {
                     fi
 
                     if [[ -n "$DB_FULL_NAME" ]]; then
-                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;"
+                        sudo mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;"
                     fi
                     if [[ -n "$DB_USER_FULL" ]]; then
-                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';"
-                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'localhost';"
+                        sudo mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';"
+                        sudo mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'localhost';"
                     fi
-                    mariadb -e "FLUSH PRIVILEGES;"
+                    sudo mariadb -e "FLUSH PRIVILEGES;"
                     print_success "Database and user removed (if they existed)."
                 fi
 
