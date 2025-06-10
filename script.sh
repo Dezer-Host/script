@@ -186,7 +186,7 @@ choose_operation_mode() {
     print_color $CYAN "What would you like to do?"
     print_color $WHITE "1) 🆕 Fresh Installation - Install DezerX from scratch"
     print_color $WHITE "2) 🔄 Update Existing - Update an existing DezerX installation"
-    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️ (Still a work in progress!)"
+    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️"
     echo ""
 
     while true; do
@@ -245,57 +245,85 @@ choose_operation_mode() {
             read -r confirm_delete
             if [[ "$confirm_delete" == "yes continue" ]]; then
                 print_info "Proceeding with deletion..."
+                local deletion_error=0
 
                 # Ask for installation directory
                 print_color $WHITE "Enter the DezerX installation directory to delete [default: /var/www/DezerX]:"
-                read -r INSTALL_DIR
-                if [[ -z "$INSTALL_DIR" ]]; then
-                    INSTALL_DIR="/var/www/DezerX"
+                read -r INSTALL_DIR_DELETE
+                if [[ -z "$INSTALL_DIR_DELETE" ]]; then
+                    INSTALL_DIR_DELETE="/var/www/DezerX"
                 fi
 
-                if [[ ! -d "$INSTALL_DIR" ]]; then
-                    print_warning "Directory $INSTALL_DIR does not exist. Skipping directory removal, continuing with deletion steps."
+                local env_file_path_delete="$INSTALL_DIR_DELETE/.env"
+                local DB_FULL_NAME_DELETE=""
+                local DB_USER_FULL_DELETE=""
+
+                if [[ -f "$env_file_path_delete" ]]; then
+                    DB_FULL_NAME_DELETE=$(get_env_variable "DB_DATABASE" "$env_file_path_delete")
+                    DB_USER_FULL_DELETE=$(get_env_variable "DB_USERNAME" "$env_file_path_delete")
                 else
-                    # Remove installation directory
-                    rm -rf "$INSTALL_DIR" 2>>"$LOG_FILE" || deletion_error=1
-                    print_success "Installation directory removed: $INSTALL_DIR"
+                    print_warning ".env file not found at $env_file_path_delete. Will ask for DB details if cleanup is desired."
+                    print_color $WHITE "Do you want to attempt to manually specify and delete database/user? (y/n)"
+                    read -r manual_db_delete
+                    if [[ "$manual_db_delete" =~ ^[Yy]$ ]]; then
+                        print_color $WHITE "Enter database name to delete (leave blank if none):"
+                        read -r DB_FULL_NAME_DELETE
+                        print_color $WHITE "Enter database user to delete (leave blank if none):"
+                        read -r DB_USER_FULL_DELETE
+                    fi
                 fi
 
-                # Remove Nginx config
+                print_info "Removing Nginx configuration..."
                 if [[ -f /etc/nginx/sites-enabled/dezerx.conf ]]; then
-                    rm -f /etc/nginx/sites-enabled/dezerx.conf 2>>"$LOG_FILE" || deletion_error=1
+                    rm -f /etc/nginx/sites-enabled/dezerx.conf >>"$LOG_FILE" 2>&1 || deletion_error=1
                 fi
                 if [[ -f /etc/nginx/sites-available/dezerx.conf ]]; then
-                    rm -f /etc/nginx/sites-available/dezerx.conf 2>>"$LOG_FILE" || deletion_error=1
+                    rm -f /etc/nginx/sites-available/dezerx.conf >>"$LOG_FILE" 2>&1 || deletion_error=1
                 fi
-                systemctl reload nginx 2>>"$LOG_FILE" || deletion_error=1
+                systemctl reload nginx >>"$LOG_FILE" 2>&1 || deletion_error=1
+                print_success "Nginx configuration removed."
 
-                # Remove installation directory
-                if [[ -d "$INSTALL_DIR" ]]; then
-                    rm -rf "$INSTALL_DIR" 2>>"$LOG_FILE" || deletion_error=1
-                    print_success "Installation directory removed: $INSTALL_DIR"
+                print_info "Removing installation directory..."
+                if [[ -d "$INSTALL_DIR_DELETE" ]]; then
+                    rm -rf "$INSTALL_DIR_DELETE" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                    print_success "Installation directory removed: $INSTALL_DIR_DELETE"
+                else
+                    print_warning "Directory $INSTALL_DIR_DELETE does not exist. Skipping directory removal."
                 fi
 
-                # Remove database and user if possible
                 if command -v mariadb &>/dev/null; then
-                    # Load DB info from .env if available
-                    if [[ -f "$INSTALL_DIR/.env" ]]; then
-                        DB_FULL_NAME=$(grep '^DB_DATABASE=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"')
-                        DB_USER_FULL=$(grep '^DB_USERNAME=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"')
+                    if [[ -n "$DB_FULL_NAME_DELETE" ]]; then
+                        print_info "Removing database '$DB_FULL_NAME_DELETE'..."
+                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME_DELETE\`;" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        print_success "Database '$DB_FULL_NAME_DELETE' removed (if it existed)."
                     fi
-
-                    if [[ -n "$DB_FULL_NAME" ]]; then
-                        sudo mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;"
+                    if [[ -n "$DB_USER_FULL_DELETE" ]]; then
+                        print_info "Removing database user '$DB_USER_FULL_DELETE'..."
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL_DELETE'@'127.0.0.1';" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL_DELETE'@'localhost';" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        print_success "Database user '$DB_USER_FULL_DELETE' removed (if it existed)."
                     fi
-                    if [[ -n "$DB_USER_FULL" ]]; then
-                        sudo mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';"
-                        sudo mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'localhost';"
+                    if [[ -n "$DB_FULL_NAME_DELETE" || -n "$DB_USER_FULL_DELETE" ]]; then
+                        mariadb -e "FLUSH PRIVILEGES;" >>"$LOG_FILE" 2>&1 || deletion_error=1
                     fi
-                    sudo mariadb -e "FLUSH PRIVILEGES;"
-                    print_success "Database and user removed (if they existed)."
+                else
+                    print_warning "mariadb command not found. Skipping database and user removal."
                 fi
 
-                if [[ "${deletion_error:-0}" -ne 0 ]]; then
+                print_info "Removing queue worker service..."
+                if systemctl is-active --quiet dezerx.service; then
+                    systemctl stop dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if systemctl is-enabled --quiet dezerx.service; then
+                    systemctl disable dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if [[ -f /etc/systemd/system/dezerx.service ]]; then
+                    rm -f /etc/systemd/system/dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                systemctl daemon-reload >>"$LOG_FILE" 2>&1 || deletion_error=1
+                print_success "Queue worker service removed."
+
+                if [[ "$deletion_error" -ne 0 ]]; then
                     print_error "Some errors occurred during deletion. Please check the log: $LOG_FILE"
                 else
                     print_success "DezerX and all related data have been deleted."
@@ -305,7 +333,7 @@ choose_operation_mode() {
                 print_info "Deletion cancelled by user"
                 exit 0
             fi
-            break
+            break # Should not be reached if deletion proceeds or is cancelled
             ;;
         *)
             print_error "Invalid choice. Please enter 1 or 2 or 3."
