@@ -1923,6 +1923,19 @@ install_nodejs_and_build() {
         return 1
     }
 
+    # Fix npm cache permissions if needed
+    if [[ -d "/var/www/.npm" ]]; then
+        chown -R www-data:www-data /var/www/.npm
+    fi
+
+    # Clean up node_modules and package-lock.json before npm install
+    if [[ -d "node_modules" ]]; then
+        rm -rf node_modules
+    fi
+    if [[ -f "package-lock.json" ]]; then
+        rm -f package-lock.json
+    fi
+
     if [[ -f "package.json" ]]; then
         print_info "Installing npm dependencies (can take a few minutes)..."
         local npm_install_cmd="npm install"
