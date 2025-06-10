@@ -648,7 +648,7 @@ backup_database() {
 
     if [[ ! -f "$env_file" ]]; then
         print_warning ".env file not found at $env_file. Skipping database backup."
-        return 0
+        return 0 # This should return, not exit
     fi
 
     local db_connection=$(get_env_variable "DB_CONNECTION" "$env_file")
@@ -660,16 +660,20 @@ backup_database() {
 
     if [[ "$db_connection" != "mysql" ]]; then
         print_warning "Database connection is not 'mysql' in .env. Skipping database backup."
-        return 0
+        return 0 # This should return, not exit
     fi
 
     if [[ -z "$db_host" || -z "$db_database" || -z "$db_username" ]]; then
         print_error "Missing database credentials in .env file. Cannot perform database backup."
+        exit 1 # Only exit on critical errors
+    fi
+
+    # Use existing BACKUP_DIR from create_backup()
+    if [[ -z "$BACKUP_DIR" ]]; then
+        print_error "BACKUP_DIR not set. create_backup() should run first."
         exit 1
     fi
 
-    BACKUP_DIR="/tmp/dezerx-backup-$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
     DB_BACKUP_FILE="$BACKUP_DIR/database_$(date +%Y%m%d-%H%M%S).sql.gz"
 
     print_info "Backing up database '$db_database'..."
@@ -689,13 +693,12 @@ backup_database() {
         exit 1
     fi
 
-    execute_with_loading "$mysqldump_cmd" "Executing database backup"
+    execute_with_loading "$mysqldump_cmd" "Creating database backup"
     local exit_code=$?
     unset MYSQL_PWD
 
     if [ $exit_code -ne 0 ]; then
         print_error "Database backup failed!"
-
         return 1
     fi
 
@@ -705,6 +708,10 @@ backup_database() {
     fi
 
     print_success "Database backup completed successfully!"
+    print_info "Database backup saved to: $DB_BACKUP_FILE"
+
+    # Add explicit continuation message
+    print_info "Continuing with update process..."
     return 0
 }
 
@@ -1172,7 +1179,6 @@ configure_laravel() {
     cd "$INSTALL_DIR"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-
         if [[ ! -f ".env.example" ]]; then
             print_error ".env.example file not found in $INSTALL_DIR"
             print_info "Directory contents:"
@@ -1182,23 +1188,23 @@ configure_laravel() {
 
         execute_with_loading "cp .env.example .env" "Copying environment configuration"
     else
-
         if [[ ! -f ".env" ]]; then
             print_error ".env file not found in $INSTALL_DIR"
             restore_backup
             exit 1
         fi
         print_info "Using existing .env configuration"
+
+        # Move sync_env_files to BEFORE composer install
+        print_step "7.1" "SYNCHRONIZING .ENV FILE"
+        sync_env_files "$INSTALL_DIR"
     fi
 
     print_info "Installing Composer dependencies..."
     if [[ "$OPERATION_MODE" == "install" ]]; then
         echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
     else
-
-        print_step "7.1" "SYNCHRONIZING .ENV FILE"
-        sync_env_files "$INSTALL_DIR"
-
+        # Remove the duplicate sync_env_files call that was here
         echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
     fi
 
@@ -1216,6 +1222,10 @@ configure_laravel() {
         exit $composer_exit_code
     fi
 
+    # Add explicit success message and continuation
+    print_success "Composer dependencies installed successfully!"
+    print_info "Continuing with Laravel configuration..."
+
     execute_with_loading "php artisan storage:link" "Linking storage directory"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
@@ -1231,7 +1241,6 @@ configure_laravel() {
         update_env_file "DB_PASSWORD" "$DB_PASSWORD" ".env"
 
         update_env_file "APP_URL" "${PROTOCOL}://$DOMAIN" ".env"
-
         update_env_file "KEY" "$LICENSE_KEY" ".env"
 
         print_success "Laravel configuration completed!"
@@ -1239,7 +1248,6 @@ configure_laravel() {
         print_success "APP_URL set to: ${PROTOCOL}://$DOMAIN"
         print_success "License key configured in KEY field"
     else
-
         update_env_file "KEY" "$LICENSE_KEY" ".env"
         print_success "Laravel configuration updated!"
         print_success "License key updated in KEY field"
@@ -1253,6 +1261,9 @@ configure_laravel() {
     else
         print_warning "Could not verify all keys in .env file"
     fi
+
+    # Add explicit completion message
+    print_success "Laravel configuration phase completed successfully!"
 }
 
 check_dns() {
@@ -1288,7 +1299,7 @@ check_dns() {
 }
 
 prompt_ufw_firewall() {
-    print_step "3" "FIREWALL CONFIGURATION"
+    print_step "11" "FIREWALL CONFIGURATION"
 
     if ! command -v ufw &>/dev/null; then
         print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
@@ -1298,33 +1309,33 @@ prompt_ufw_firewall() {
     print_color $WHITE "Would you like to automatically configure the firewall (ufw) to allow HTTP/HTTPS traffic? (y/n):"
     read -r ufw_choice
     case "$ufw_choice" in
+    [Yy] | [Yy][Ee][Ss])
+        print_info "Configuring UFW to allow ports 80 (HTTP) and 443 (HTTPS)..."
+        execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
+        ufw allow 80/tcp >>"$LOG_FILE" 2>&1
+        ufw allow 443/tcp >>"$LOG_FILE" 2>&1
+        ufw reload >>"$LOG_FILE" 2>&1
+        print_success "UFW configured to allow HTTP/HTTPS traffic."
+        ;;
+    *)
+        print_warning "Skipped UFW firewall configuration. Make sure ports 80 and 443 are open."
+        print_color $WHITE "Do you want ufw to be started and enabled? (y/n):"
+        read -r ufw_start_choice
+        case "$ufw_start_choice" in
         [Yy] | [Yy][Ee][Ss])
-            print_info "Configuring UFW to allow ports 80 (HTTP) and 443 (HTTPS)..."
             execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
-            ufw allow 80/tcp >>"$LOG_FILE" 2>&1
-            ufw allow 443/tcp >>"$LOG_FILE" 2>&1
-            ufw reload >>"$LOG_FILE" 2>&1
-            print_success "UFW configured to allow HTTP/HTTPS traffic."
+            print_success "UFW started and enabled, but no ports were opened."
             ;;
         *)
-            print_warning "Skipped UFW firewall configuration. Make sure ports 80 and 443 are open."
-            print_color $WHITE "Do you want ufw to be started and enabled? (y/n):"
-            read -r ufw_start_choice
-            case "$ufw_start_choice" in
-                [Yy] | [Yy][Ee][Ss])
-                    execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
-                    print_success "UFW started and enabled, but no ports were opened."
-                    ;;
-                *)
-                    print_info "UFW will not be started or enabled."
-                    ;;
-            esac
+            print_info "UFW will not be started or enabled."
             ;;
+        esac
+        ;;
     esac
 }
 
 setup_ssl() {
-    print_step "11" "SETTING UP SSL CERTIFICATE"
+    print_step "12" "SETTING UP SSL CERTIFICATE"
 
     execute_with_loading "apt-get install -y certbot python3-certbot-nginx" "Installing Certbot"
 
@@ -1362,13 +1373,13 @@ EOF
 }
 
 setup_ssl_skip() {
-    print_step "11" "SETTING UP SSL CERTIFICATE"
+    print_step "13" "SETTING UP SSL CERTIFICATE"
 
     print_warning "You selected HTTP. Skipping SSL certificate setup."
 }
 
 configure_nginx() {
-    print_step "12" "CONFIGURING NGINX"
+    print_step "14" "CONFIGURING NGINX"
 
     print_info "Removing default Nginx configuration..."
     rm -f /etc/nginx/sites-available/default
@@ -1507,9 +1518,9 @@ EOF
 
 install_nodejs_and_build() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "13" "INSTALLING NODE.JS AND BUILDING ASSETS"
+        print_step "15" "INSTALLING NODE.JS AND BUILDING ASSETS"
     else
-        print_step "8" "BUILDING ASSETS"
+        print_step "15" "BUILDING ASSETS"
     fi
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
@@ -1531,9 +1542,9 @@ install_nodejs_and_build() {
 
 set_permissions() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "14" "SETTING FILE PERMISSIONS"
+        print_step "16" "SETTING FILE PERMISSIONS"
     else
-        print_step "9" "SETTING FILE PERMISSIONS"
+        print_step "16" "SETTING FILE PERMISSIONS"
     fi
 
     execute_with_loading "chown -R www-data:www-data $INSTALL_DIR" "Setting ownership to www-data"
@@ -1552,9 +1563,9 @@ set_permissions() {
 
 run_migrations() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "15" "RUNNING DATABASE MIGRATIONS"
+        print_step "17" "RUNNING DATABASE MIGRATIONS"
     else
-        print_step "10" "RUNNING DATABASE MIGRATIONS"
+        print_step "17" "RUNNING DATABASE MIGRATIONS"
     fi
 
     cd "$INSTALL_DIR"
@@ -1612,7 +1623,7 @@ run_migrations() {
 }
 
 setup_cron() {
-    print_step "16" "SETTING UP CRON JOBS"
+    print_step "18" "SETTING UP CRON JOBS"
 
     print_info "Adding Laravel scheduler to crontab..."
 
@@ -1643,7 +1654,10 @@ setup_cron() {
     # Add certbot renewal cronjob only if https is selected and certbot is installed
     if [[ "$PROTOCOL" == "https" ]] && command -v certbot &>/dev/null; then
         if ! crontab -l 2>/dev/null | grep -q 'certbot renew --quiet --deploy-hook "systemctl restart nginx"'; then
-            (crontab -l 2>/dev/null; echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"') | crontab -
+            (
+                crontab -l 2>/dev/null
+                echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"'
+            ) | crontab -
             print_success "Added SSL renewal cronjob for certbot."
         else
             print_info "SSL renewal cronjob for certbot already exists."
@@ -1666,7 +1680,7 @@ setup_cron() {
 }
 
 setup_queue_worker() {
-    print_step "17" "SETTING UP QUEUE WORKER SERVICE"
+    print_step "19" "SETTING UP QUEUE WORKER SERVICE"
 
     print_info "Creating systemd service for queue worker..."
     cat >/etc/systemd/system/dezerx.service <<EOF
@@ -1714,7 +1728,7 @@ cleanup_backup() {
 
 print_summary() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "18" "INSTALLATION COMPLETE"
+        print_step "20" "INSTALLATION COMPLETE"
 
         print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
         print_color $GREEN "║                                                              ║"
@@ -1739,7 +1753,7 @@ print_summary() {
         print_info "2. Complete the initial setup wizard"
         print_info "3. Configure your application settings"
     else
-        print_step "11" "UPDATE COMPLETE"
+        print_step "20" "UPDATE COMPLETE"
 
         print_color $GREEN "
 ╔══════════════════════════════════════════════════════════════╗
@@ -1848,11 +1862,9 @@ cleanup_on_error() {
 }
 
 main() {
-
     echo "DezerX $(if [[ "$OPERATION_MODE" == "install" ]]; then echo "Installation"; else echo "Update"; fi) Log - $(date)" >"$LOG_FILE"
 
     print_banner
-
     trap 'cleanup_on_error $LINENO' ERR
 
     check_required_commands
@@ -1861,7 +1873,6 @@ main() {
     check_system_requirements
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-
         get_install_input
         verify_license
         install_dependencies
@@ -1883,21 +1894,22 @@ main() {
         setup_cron
         setup_queue_worker
     else
-
-        get_update_input
-        verify_license
-        create_backup
-        backup_database
-        download_dezerx
-        configure_laravel
-        install_nodejs_and_build
-        set_permissions
-        run_migrations
-        cleanup_backup
+        if [[ "$OPERATION_MODE" == "update" ]]; then
+            # UPDATE MODE
+            get_update_input
+            verify_license
+            create_backup
+            download_dezerx
+            configure_laravel                                              # This should complete and continue
+            print_info "DEBUG: configure_laravel completed, continuing..." # Add debug message
+            install_nodejs_and_build
+            set_permissions
+            run_migrations
+            cleanup_backup
+        fi
     fi
 
     print_summary
-
     log_message "Operation completed successfully"
 }
 
