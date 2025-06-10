@@ -70,7 +70,37 @@ log_message() {
 }
 
 show_loading() {
-    # ...existing code...
+    local pid=$1
+    local message=$2
+    local spin_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    # If colors are not defined yet or causing issues, remove them for debugging
+    # local blue_color="$BLUE"
+    # local green_color="$GREEN"
+    # local nc_color="$NC"
+    local blue_color='\033[0;34m' # Define locally if not sure about global scope yet
+    local green_color='\033[1;32m'
+    local nc_color='\033[0m'
+
+    local frame_count=${#spin_frames[@]}
+    local i=0
+
+    # Hide cursor
+    tput civis 2>/dev/null || true
+
+    # Check if PID is valid and running
+    while kill -0 "$pid" 2>/dev/null; do
+        # Ensure message is not empty
+        local display_message="${message:-Processing}"
+        printf "\r${blue_color}%s %s${nc_color} " "$display_message" "${spin_frames[$i]}"
+        i=$(((i + 1) % frame_count))
+        sleep 0.08
+    done
+
+    # Show checkmark and restore cursor
+    # Ensure message is not empty for the final display
+    local final_display_message="${message:-Done}"
+    printf "\r${blue_color}%s ${green_color}✔${nc_color}\n" "$final_display_message"
+    tput cnorm 2>/dev/null || true
 }
 
 execute_with_loading() {
