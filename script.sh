@@ -98,7 +98,7 @@ print_banner() {
 ║     ${BOLD}${WHITE}╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝${NC}${CYAN}         ║
 ║                                                              ║
 ║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}              ║
-║                  🚀 Requires Root Access 🚀                 ║
+║                  🚀 Requires Root Access 🚀                  ║
 ╚══════════════════════════════════════════════════════════════╝
 "
     print_color $YELLOW "📋 This script can install or update DezerX"
@@ -1771,13 +1771,11 @@ print_summary() {
     else
         print_step "11" "UPDATE COMPLETE"
 
-        print_color $GREEN "
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║                      🎉 UPDATE SUCCESSFUL! 🎉               ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-"
+        print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "║                      🎉 UPDATE SUCCESSFUL! 🎉               ║"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
 
         print_success "DezerX has been successfully updated!"
 
@@ -1785,6 +1783,8 @@ print_summary() {
         print_color $CYAN "📊 UPDATE DETAILS:"
         print_info "🌐 URL: ${BOLD}${PROTOCOL}://$DOMAIN${NC}"
         print_info "📁 Directory: ${BOLD}$INSTALL_DIR${NC}"
+        print_info "🗄️  Database: ${BOLD}$DB_FULL_NAME${NC}"
+        print_info "👤 DB User: ${BOLD}$DB_USER_FULL${NC}"
         print_info "🔑 License Key: ${BOLD}${LICENSE_KEY:0:8}***${NC}"
 
         echo ""
