@@ -9,7 +9,7 @@ readonly CYAN='\033[0;36m'
 readonly WHITE='\033[1;37m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
-readonly SCRIPT_VERSION="2.0"
+readonly SCRIPT_VERSION="3.0"
 
 LICENSE_KEY=""
 DOMAIN=""
@@ -214,9 +214,13 @@ choose_operation_mode() {
                 if [[ -z "$INSTALL_DIR" ]]; then
                     INSTALL_DIR="/var/www/DezerX"
                 fi
+
                 if [[ ! -d "$INSTALL_DIR" ]]; then
-                    print_error "Directory $INSTALL_DIR does not exist. Aborting deletion."
-                    exit 1
+                    print_warning "Directory $INSTALL_DIR does not exist. Skipping directory removal, continuing with deletion steps."
+                else
+                    # Remove installation directory
+                    rm -rf "$INSTALL_DIR" 2>>"$LOG_FILE" || deletion_error=1
+                    print_success "Installation directory removed: $INSTALL_DIR"
                 fi
 
                 # Remove Nginx config
