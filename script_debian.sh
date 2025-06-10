@@ -54,7 +54,6 @@ print_color() {
 }
 
 check_required_commands() {
-    echo "DEBUG: Entered check_required_commands." >&2
     local cmds=(curl awk grep sed)
     for cmd in "${cmds[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
@@ -62,7 +61,6 @@ check_required_commands() {
             exit 1
         fi
     done
-    echo "DEBUG: Finished check_required_commands." >&2
 }
 
 log_message() {
@@ -132,7 +130,6 @@ execute_with_loading() {
 }
 
 print_banner() {
-    echo "DEBUG: Entered print_banner." >&2
     # Make clear command more fault-tolerant
     command clear 2>/dev/null || printf '\033c' || echo "--- Attempted to clear screen ---"
 
@@ -146,7 +143,7 @@ print_banner() {
 ║     ${BOLD}${WHITE}██████╔╝███████╗███████╗███████╗██║  ██║██╔╝ ██╗${NC}${CYAN}         ║
 ║     ${BOLD}${WHITE}╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝${NC}${CYAN}         ║
 ║                                                              ║
-║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}              ║
+║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}        ║
 ║                  🚀 Requires Root Access 🚀                  ║
 ╚══════════════════════════════════════════════════════════════╝
 "
@@ -154,7 +151,6 @@ print_banner() {
     print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 1-3 minutes (update)"
     print_color $YELLOW "📝 Operation log: $LOG_FILE"
     echo ""
-    echo "DEBUG: Finished print_banner." >&2
 }
 
 print_step() {
@@ -2223,23 +2219,19 @@ cleanup_on_error() {
 
 # --- Main Script Logic ---
 main() {
-    echo "DEBUG: Main function entered." >&2
+    echo "DEBUG: Main function entered." // This one was not in the removal list >&2
     # Start logging immediately
     echo "DezerX Script Log - $(date)" >"$LOG_FILE" # This should be the first write to the log file.
     chmod 644 "$LOG_FILE"                           # Make log readable by others if needed, or keep it 600 for root only
 
-    echo "DEBUG: About to print banner in main." >&2
+    echo "DEBUG: About to print banner in main." // This one was not in the removal list >&2
     print_banner
     # Set up error trapping
     trap 'cleanup_on_error $LINENO' ERR
-    echo "DEBUG: ERR trap set." >&2
 
-    echo "DEBUG: About to check required commands in main." >&2
     check_required_commands
-    echo "DEBUG: About to check root in main." >&2
     check_root # Ensures script is run as root from this point
 
-    echo "DEBUG: About to choose operation mode in main." >&2
     choose_operation_mode # Sets OPERATION_MODE or exits if user cancels delete confirmation
 
     # If delete operation was chosen, it handles its own flow and exits.
