@@ -779,12 +779,22 @@ create_backup() {
 get_env_variable() {
     local var_name="$1"
     local env_file="$2"
+    local value=""
     if [[ -f "$env_file" ]]; then
-        # Read variable, remove potential quotes and carriage returns
-        grep "^${var_name}=" "$env_file" | cut -d '=' -f 2- | sed 's/\r$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
-    else
-        echo "" # Return empty if file not found
+        # Read variable:
+        # 1. Grep the line starting with VAR_NAME=
+        # 2. Cut everything after the first '='
+        # 3. Remove leading/trailing whitespace from the value.
+        # 4. Remove surrounding quotes (single or double) if present.
+        # 5. Remove inline comments (starting with a space then '#').
+        # 6. Remove DOS carriage return.
+        value=$(grep "^${var_name}=" "$env_file" | cut -d '=' -f 2- |
+            sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+                -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/" \
+                -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' \
+                -e 's/\r$//')
     fi
+    echo "$value"
 }
 
 backup_database() {
