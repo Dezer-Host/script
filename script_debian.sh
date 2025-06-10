@@ -2294,3 +2294,9 @@ main() {
     trap - ERR # Disable error trap for clean exit
     exit 0
 }
+
+# Ensure script is not sourced, and run main
+echo "DEBUG: Script execution reached end, about to call main." >&2 # ADD THIS LINE
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
