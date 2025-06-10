@@ -3,7 +3,7 @@
 # --- EARLY SYSTEM CHECK: Redirect Debian users to the Debian script ---
 if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
     echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
-    exec bash <(curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh)
+    curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
     exit 0
 fi
 
@@ -149,6 +149,35 @@ check_root() {
         exit 1
     fi
     print_success "Running with root privileges"
+}
+
+choose_install_variant() {
+    print_step "0" "CHOOSE INSTALLATION VARIANT"
+    print_color $CYAN "Please choose the installation variant:"
+    print_color $WHITE "1) 🆕 Normal (without a GUI)"
+    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA)"
+    echo ""
+
+    while true; do
+        print_color $WHITE "Please choose an option (1 or 2):"
+        read -r choice
+        case $choice in
+        1)
+            print_success "Selected: Normal Installation (without GUI)"
+            return 0
+            ;;
+        2)
+            print_success "Selected: GUI Installation (ALPHA)"
+            print_warning "This variant is still in ALPHA stage and may not work as expected."
+            # Download and run the GUI script, then exit this script
+            curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_gui.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+            exit 0
+            ;;
+        *)
+            print_error "Invalid choice. Please enter 1 or 2."
+            ;;
+        esac
+    done
 }
 
 choose_operation_mode() {
@@ -1894,6 +1923,7 @@ main() {
 
     check_required_commands
     check_root
+    choose_install_variant
     choose_operation_mode
     check_system_requirements
 
