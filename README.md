@@ -65,8 +65,6 @@ curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script.sh -o
 ## Uninstall
 
 DezerX provides an **uninstall/delete option directly in the script**.  
-This feature is currently in **alpha** but works for most use cases and will remove DezerX, its Nginx configs, and the database/user if possible.
-
 To uninstall, simply **run the script again and choose the delete option** from the interactive menu.
 
 ---
@@ -84,5 +82,7 @@ This script is **not open source** and is intended solely for installing or upda
 You may not copy, distribute, or modify this script for other purposes without explicit permission from the author.
 
 **Contributions are welcome** for improving the installation experience, but usage is limited to DezerX customers and partners.
+
+If you want to contribute but don't know where to start, check the [TODO](./TODO.md) file for ideas and open tasks.
 
 All rights are reserved by the author.
