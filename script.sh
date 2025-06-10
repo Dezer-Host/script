@@ -795,7 +795,7 @@ install_dependencies() {
 
     execute_with_loading "apt-get update" "Updating package lists with new repositories"
 
-    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server"
+    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server ufw"
 
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y $packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
 
@@ -803,6 +803,7 @@ install_dependencies() {
     execute_with_loading "systemctl start php8.3-fpm && systemctl enable php8.3-fpm" "Starting and enabling PHP-FPM"
     execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis"
     execute_with_loading "systemctl start cron && systemctl enable cron" "Starting and enabling Cron service"
+    execute_with_loading "systemctl stop ufw && systemctl disable ufw" "Stoping and disabling UFW due to later configuration"
 
     execute_with_loading "mkdir -p /var/www" "Creating /var/www directory"
 
@@ -1326,6 +1327,42 @@ check_dns() {
             ;;
         esac
     done
+}
+
+prompt_ufw_firewall() {
+    print_step "3" "FIREWALL CONFIGURATION"
+
+    if ! command -v ufw &>/dev/null; then
+        print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
+        return
+    fi
+
+    print_color $WHITE "Would you like to automatically configure the firewall (ufw) to allow HTTP/HTTPS traffic? (y/n):"
+    read -r ufw_choice
+    case "$ufw_choice" in
+        [Yy] | [Yy][Ee][Ss])
+            print_info "Configuring UFW to allow ports 80 (HTTP) and 443 (HTTPS)..."
+            execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
+            ufw allow 80/tcp >>"$LOG_FILE" 2>&1
+            ufw allow 443/tcp >>"$LOG_FILE" 2>&1
+            ufw reload >>"$LOG_FILE" 2>&1
+            print_success "UFW configured to allow HTTP/HTTPS traffic."
+            ;;
+        *)
+            print_warning "Skipped UFW firewall configuration. Make sure ports 80 and 443 are open."
+            print_color $WHITE "Do you want ufw to be started and enabled? (y/n):"
+            read -r ufw_start_choice
+            case "$ufw_start_choice" in
+                [Yy] | [Yy][Ee][Ss])
+                    execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
+                    print_success "UFW started and enabled, but no ports were opened."
+                    ;;
+                *)
+                    print_info "UFW will not be started or enabled."
+                    ;;
+            esac
+            ;;
+    esac
 }
 
 setup_ssl() {
@@ -1875,6 +1912,7 @@ main() {
         download_dezerx
         configure_laravel
         check_dns
+        prompt_ufw_firewall
         if [[ "$PROTOCOL" == "https" ]]; then
             setup_ssl
         else
