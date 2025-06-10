@@ -1,7 +1,21 @@
-#!/bin/bash
 set -euo pipefail
 
-readonly SCRIPT_VERSION="0.5 Alpha"
+# Auto-install dialog if missing (silent)
+if ! command -v dialog &>/dev/null; then
+    if command -v apt-get &>/dev/null; then
+        apt-get update -qq >/dev/null 2>&1 && apt-get install -y dialog >/dev/null 2>&1
+    else
+        echo "Error: This script requires apt-get (Debian/Ubuntu system)"
+        exit 1
+    fi
+
+    if ! command -v dialog &>/dev/null; then
+        echo "Failed to install dialog. Exiting."
+        exit 1
+    fi
+fi
+
+readonly SCRIPT_VERSION="2.0"
 LOG_FILE="/tmp/dezerx-install.log"
 OPERATION_MODE=""
 LICENSE_KEY=""
@@ -17,19 +31,7 @@ BACKUP_DIR=""
 DB_BACKUP_FILE=""
 
 print_banner() {
-    whiptail --title "DezerX Installer" --msgbox "██████╗ ███████╗███████╗███████╗██████╗ ██╗  ██╗
-██╔══██╗██╔════╝╚══███╔╝██╔════╝██╔══██╗╚██╗██╔╝
-██║  ██║█████╗    ███╔╝ █████╗  ██████╔╝ ╚███╔╝ 
-██║  ██║██╔══╝   ███╔╝  ██╔══╝  ██╔══██╗ ██╔██╗ 
-██████╔╝███████╗███████╗███████╗██║  ██║██╔╝ ██╗
-╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
-
-INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}
-Requires Root Access
-
-This script can install or update DezerX.
-Estimated time: 3-6 minutes (install) / 3-5 minutes (update)
-Operation log: $LOG_FILE" 20 70
+    dialog --title "DezerX Installer" --msgbox "██████╗ ███████╗███████╗███████╗██████╗ ██╗  ██╗\n██╔══██╗██╔════╝╚══███╔╝██╔════╝██╔══██╗╚██╗██╔╝\n██║  ██║█████╗    ███╔╝ █████╗  ██████╔╝ ╚███╔╝ \n██║  ██║██╔══╝   ███╔╝  ██╔══╝  ██╔══██╗ ██╔██╗ \n██████╔╝███████╗███████╗███████╗██║  ██║██╔╝ ██╗\n╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝\n\nINSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}\nRequires Root Access\n\nThis script can install or update DezerX.\nEstimated time: 3-6 minutes (install) / 3-5 minutes (update)\nOperation log: $LOG_FILE" 20 70
 }
 
 log_message() {
@@ -42,14 +44,14 @@ show_loading() {
     local i=0
     while kill -0 "$pid" 2>/dev/null; do
         case $((i % 4)) in
-            0) echo -n " [|] $message" ;;
-            1) echo -n " [/] $message" ;;
-            2) echo -n " [-] $message" ;;
-            3) echo -n " [\\] $message" ;;
+        0) echo -n " [|] $message" ;;
+        1) echo -n " [/] $message" ;;
+        2) echo -n " [-] $message" ;;
+        3) echo -n " [\\] $message" ;;
         esac
         sleep 0.5
         echo -ne "\r"
-        i=$((i+1))
+        i=$((i + 1))
     done
     echo " [✓] $message - Complete"
 }
@@ -64,83 +66,88 @@ execute_with_loading() {
     wait $pid
     local exit_code=$?
     if [ $exit_code -ne 0 ]; then
-        whiptail --title "Error" --msgbox "Command failed: $command\nCheck log file: $LOG_FILE" 12 70
+        dialog --title "Error" --msgbox "Command failed: $command\nCheck log file: $LOG_FILE" 12 70
         exit $exit_code
     fi
     return $exit_code
 }
 
 check_required_commands() {
-    local cmds=(curl awk grep sed whiptail)
+    local cmds=(curl awk grep sed dialog)
     for cmd in "${cmds[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
-            whiptail --title "Error" --msgbox "Required command '$cmd' not found. Please install it." 10 60
-            exit 1
+            if [[ "$cmd" == "dialog" ]]; then
+                echo "Installing dialog..."
+                apt-get update && apt-get install -y dialog
+            else
+                dialog --title "Error" --msgbox "Required command '$cmd' not found. Please install it." 10 60
+                exit 1
+            fi
         fi
     done
 }
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        whiptail --title "Error" --msgbox "This script must be run as root!\n\nPlease run: sudo $0" 10 60
+        dialog --title "Error" --msgbox "This script must be run as root!\n\nPlease run: sudo $0" 10 60
         exit 1
     fi
 }
 
 choose_operation_mode() {
     local choice
-    choice=$(whiptail --title "DezerX Installer" --menu "What would you like to do?" 18 70 10 \
+    choice=$(dialog --title "DezerX Installer" --menu "What would you like to do?" 18 70 10 \
         "1" "🆕 Fresh Installation - Install DezerX from scratch" \
         "2" "🔄 Update Existing - Update an existing DezerX installation" \
         "3" "⚠️  Delete Installation - Remove DezerX and all its data ⚠️" 3>&1 1>&2 2>&3)
-    
+
     case $choice in
-        1) 
-            OPERATION_MODE="install"
-            if whiptail --title "Backup Option" --yesno "Would you like to automatically restore the previous backup if an error occurs?\n\nThe non-automatic restore feature is intended for developers and testing environments only." 12 70; then
-                RESTORE_ON_FAILURE="yes"
-            else
-                RESTORE_ON_FAILURE="no"
-            fi
-            ;;
-        2) 
-            OPERATION_MODE="update"
-            if whiptail --title "Backup Option" --yesno "Would you like to automatically restore the previous backup if an error occurs?\n\nThe non-automatic restore feature is intended for developers and testing environments only." 12 70; then
-                RESTORE_ON_FAILURE="yes"
-            else
-                RESTORE_ON_FAILURE="no"
-            fi
-            ;;
-        3) 
-            OPERATION_MODE="delete"
-            handle_deletion
-            ;;
-        *)
-            whiptail --title "Error" --msgbox "Invalid choice. Exiting." 10 60
-            exit 1
-            ;;
+    1)
+        OPERATION_MODE="install"
+        if dialog --title "Backup Option" --yesno "Would you like to automatically restore the previous backup if an error occurs?\n\nThe non-automatic restore feature is intended for developers and testing environments only." 12 70; then
+            RESTORE_ON_FAILURE="yes"
+        else
+            RESTORE_ON_FAILURE="no"
+        fi
+        ;;
+    2)
+        OPERATION_MODE="update"
+        if dialog --title "Backup Option" --yesno "Would you like to automatically restore the previous backup if an error occurs?\n\nThe non-automatic restore feature is intended for developers and testing environments only." 12 70; then
+            RESTORE_ON_FAILURE="yes"
+        else
+            RESTORE_ON_FAILURE="no"
+        fi
+        ;;
+    3)
+        OPERATION_MODE="delete"
+        handle_deletion
+        ;;
+    *)
+        dialog --title "Error" --msgbox "Invalid choice. Exiting." 10 60
+        exit 1
+        ;;
     esac
 }
 
 handle_deletion() {
-    if ! whiptail --title "Delete Confirmation" --yesno "This will remove DezerX and all its data permanently!\n\nAre you absolutely sure you want to continue?" 12 70; then
-        whiptail --title "Cancelled" --msgbox "Deletion cancelled by user." 10 60
+    if ! dialog --title "Delete Confirmation" --yesno "This will remove DezerX and all its data permanently!\n\nAre you absolutely sure you want to continue?" 12 70; then
+        dialog --title "Cancelled" --msgbox "Deletion cancelled by user." 10 60
         exit 0
     fi
 
-    INSTALL_DIR=$(whiptail --title "Installation Directory" --inputbox "Enter the DezerX installation directory to delete:" 10 60 "/var/www/DezerX" 3>&1 1>&2 2>&3)
+    INSTALL_DIR=$(dialog --title "Installation Directory" --inputbox "Enter the DezerX installation directory to delete:" 10 60 "/var/www/DezerX" 3>&1 1>&2 2>&3)
     if [[ -z "$INSTALL_DIR" ]]; then
         INSTALL_DIR="/var/www/DezerX"
     fi
 
     if [[ ! -d "$INSTALL_DIR" ]]; then
-        whiptail --title "Error" --msgbox "Directory $INSTALL_DIR does not exist. Aborting deletion." 10 60
+        dialog --title "Error" --msgbox "Directory $INSTALL_DIR does not exist. Aborting deletion." 10 60
         exit 1
     fi
 
-    local confirmation_text=$(whiptail --title "Final Confirmation" --inputbox "Type 'DELETE EVERYTHING' to confirm deletion of $INSTALL_DIR:" 10 70 "" 3>&1 1>&2 2>&3)
+    local confirmation_text=$(dialog --title "Final Confirmation" --inputbox "Type 'DELETE EVERYTHING' to confirm deletion of $INSTALL_DIR:" 10 70 "" 3>&1 1>&2 2>&3)
     if [[ "$confirmation_text" != "DELETE EVERYTHING" ]]; then
-        whiptail --title "Cancelled" --msgbox "Deletion cancelled - confirmation text did not match." 10 60
+        dialog --title "Cancelled" --msgbox "Deletion cancelled - confirmation text did not match." 10 60
         exit 0
     fi
 
@@ -148,8 +155,8 @@ handle_deletion() {
 }
 
 perform_deletion() {
-    whiptail --title "Deleting" --infobox "Removing DezerX installation..." 10 60
-    
+    dialog --title "Deleting" --infobox "Removing DezerX installation..." 10 60
+
     # Load DB info from .env if available
     if [[ -f "$INSTALL_DIR/.env" ]]; then
         DB_FULL_NAME=$(grep '^DB_DATABASE=' "$INSTALL_DIR/.env" | cut -d '=' -f2- | tr -d '"' || echo "")
@@ -179,12 +186,12 @@ perform_deletion() {
     systemctl disable dezerx.service 2>>"$LOG_FILE" || true
     rm -f /etc/systemd/system/dezerx.service 2>>"$LOG_FILE" || true
 
-    whiptail --title "Complete" --msgbox "DezerX and all related data have been deleted successfully." 10 60
+    dialog --title "Complete" --msgbox "DezerX and all related data have been deleted successfully." 10 60
     exit 0
 }
 
 check_system_requirements() {
-    whiptail --title "System Check" --infobox "Checking system requirements..." 10 60
+    dialog --title "System Check" --infobox "Checking system requirements..." 10 60
 
     if ! command -v curl &>/dev/null; then
         execute_with_loading "apt-get update && apt-get install -y curl" "Installing curl"
@@ -202,7 +209,7 @@ check_system_requirements() {
     local os_version=$(lsb_release -sr)
 
     if [[ "$os_name" != "Ubuntu" ]] && [[ "$os_name" != "Debian" ]]; then
-        whiptail --title "Error" --msgbox "This script only supports Ubuntu and Debian\nDetected: $os_name $os_version" 10 60
+        dialog --title "Error" --msgbox "This script only supports Ubuntu and Debian\nDetected: $os_name $os_version" 10 60
         exit 1
     fi
 
@@ -213,13 +220,13 @@ check_system_requirements() {
     fi
 
     if [[ $available_space -lt $required_space ]]; then
-        whiptail --title "Error" --msgbox "Insufficient disk space.\nRequired: $((required_space / 1024 / 1024))GB\nAvailable: $((available_space / 1024 / 1024))GB" 10 60
+        dialog --title "Error" --msgbox "Insufficient disk space.\nRequired: $((required_space / 1024 / 1024))GB\nAvailable: $((available_space / 1024 / 1024))GB" 10 60
         exit 1
     fi
 
     local total_mem=$(free -m | awk 'NR==2{print $2}')
     if [[ $total_mem -lt 1024 ]]; then
-        whiptail --title "Warning" --msgbox "Low memory detected: ${total_mem}MB\nRecommended: 2GB+\n\nContinuing anyway..." 10 60
+        dialog --title "Warning" --msgbox "Low memory detected: ${total_mem}MB\nRecommended: 2GB+\n\nContinuing anyway..." 10 60
     fi
 
     # Check dependency versions
@@ -239,10 +246,10 @@ check_system_requirements() {
     fi
 
     if [[ -n "$version_warnings" ]]; then
-        whiptail --title "Version Warnings" --msgbox "Some dependencies may be outdated:\n\n$version_warnings\nInstallation will continue..." 12 70
+        dialog --title "Version Warnings" --msgbox "Some dependencies may be outdated:\n\n$version_warnings\nInstallation will continue..." 12 70
     fi
 
-    whiptail --title "System Check" --msgbox "System requirements check passed!\n\nOS: $os_name $os_version\nMemory: ${total_mem}MB\nDisk Space: $((available_space / 1024 / 1024))GB available" 12 60
+    dialog --title "System Check" --msgbox "System requirements check passed!\n\nOS: $os_name $os_version\nMemory: ${total_mem}MB\nDisk Space: $((available_space / 1024 / 1024))GB available" 12 60
 }
 
 validate_domain() {
@@ -258,39 +265,39 @@ validate_domain() {
 
 get_install_input() {
     while true; do
-        LICENSE_KEY=$(whiptail --title "License Key" --inputbox "Enter your DezerX license key:" 10 60 "" 3>&1 1>&2 2>&3)
+        LICENSE_KEY=$(dialog --title "License Key" --inputbox "Enter your DezerX license key:" 10 60 "" 3>&1 1>&2 2>&3)
         if [[ -n "$LICENSE_KEY" && ${#LICENSE_KEY} -ge 10 ]]; then
             break
         else
-            whiptail --title "Error" --msgbox "License key must be at least 10 characters. Please try again." 10 60
+            dialog --title "Error" --msgbox "License key must be at least 10 characters. Please try again." 10 60
         fi
     done
 
     while true; do
-        DOMAIN=$(whiptail --title "Domain" --inputbox "Enter your domain or subdomain:\n(e.g., example.com or app.example.com)\n\nDo NOT include http:// or https://" 12 70 "" 3>&1 1>&2 2>&3)
+        DOMAIN=$(dialog --title "Domain" --inputbox "Enter your domain or subdomain:\n(e.g., example.com or app.example.com)\n\nDo NOT include http:// or https://" 12 70 "" 3>&1 1>&2 2>&3)
         if [[ -z "$DOMAIN" ]]; then
-            whiptail --title "Error" --msgbox "Domain cannot be empty." 10 60
+            dialog --title "Error" --msgbox "Domain cannot be empty." 10 60
             continue
         fi
 
         validate_domain "$DOMAIN"
         local validation_result=$?
         if [[ $validation_result -eq 2 ]]; then
-            whiptail --title "Error" --msgbox "Please enter the domain WITHOUT http:// or https://\n\nExample: Use 'example.com' instead of 'https://example.com'" 10 70
+            dialog --title "Error" --msgbox "Please enter the domain WITHOUT http:// or https://\n\nExample: Use 'example.com' instead of 'https://example.com'" 10 70
             continue
         elif [[ $validation_result -eq 1 ]]; then
-            whiptail --title "Error" --msgbox "Invalid domain format. Please try again." 10 60
+            dialog --title "Error" --msgbox "Invalid domain format. Please try again." 10 60
             continue
         else
             break
         fi
     done
 
-    PROTOCOL=$(whiptail --title "Protocol" --radiolist "Choose protocol:" 12 60 2 \
-        "https" "HTTPS - Secure (recommended)" ON \
-        "http" "HTTP - Insecure" OFF 3>&1 1>&2 2>&3)
+    PROTOCOL=$(dialog --title "Protocol" --radiolist "Choose protocol:" 12 60 2 \
+        "https" "HTTPS - Secure (recommended)" on \
+        "http" "HTTP - Insecure" off 3>&1 1>&2 2>&3)
 
-    INSTALL_DIR=$(whiptail --title "Install Directory" --inputbox "Enter installation directory:" 10 60 "/var/www/DezerX" 3>&1 1>&2 2>&3)
+    INSTALL_DIR=$(dialog --title "Install Directory" --inputbox "Enter installation directory:" 10 60 "/var/www/DezerX" 3>&1 1>&2 2>&3)
     if [[ -z "$INSTALL_DIR" ]]; then
         INSTALL_DIR="/var/www/DezerX"
     fi
@@ -300,94 +307,94 @@ get_install_input() {
         DB_NAME_PREFIX="dzrx"
     fi
 
-    DB_FULL_NAME=$(whiptail --title "Database Name" --inputbox "Database name:" 10 60 "${DB_NAME_PREFIX}_dezerx" 3>&1 1>&2 2>&3)
+    DB_FULL_NAME=$(dialog --title "Database Name" --inputbox "Database name:" 10 60 "${DB_NAME_PREFIX}_dezerx" 3>&1 1>&2 2>&3)
     if [[ -z "$DB_FULL_NAME" ]]; then
         DB_FULL_NAME="${DB_NAME_PREFIX}_dezerx"
     fi
 
-    DB_USER_FULL=$(whiptail --title "Database User" --inputbox "Database user:" 10 60 "${DB_NAME_PREFIX}_dezer" 3>&1 1>&2 2>&3)
+    DB_USER_FULL=$(dialog --title "Database User" --inputbox "Database user:" 10 60 "${DB_NAME_PREFIX}_dezer" 3>&1 1>&2 2>&3)
     if [[ -z "$DB_USER_FULL" ]]; then
         DB_USER_FULL="${DB_NAME_PREFIX}_dezer"
     fi
 
-    DB_PASSWORD=$(whiptail --title "Database Password" --passwordbox "Database password (leave blank to auto-generate):" 10 60 "" 3>&1 1>&2 2>&3)
+    DB_PASSWORD=$(dialog --title "Database Password" --passwordbox "Database password (leave blank to auto-generate):" 10 60 "" 3>&1 1>&2 2>&3)
     if [[ -z "$DB_PASSWORD" ]]; then
         DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
     fi
 
-    whiptail --title "Installation Summary" --yesno "Please confirm your installation settings:\n\nLicense Key: ${LICENSE_KEY:0:8}***\nDomain: $DOMAIN\nProtocol: $PROTOCOL\nFull URL: ${PROTOCOL}://$DOMAIN\nInstall Directory: $INSTALL_DIR\nDatabase: $DB_FULL_NAME\nDB User: $DB_USER_FULL\n\nProceed with installation?" 18 70
+    dialog --title "Installation Summary" --yesno "Please confirm your installation settings:\n\nLicense Key: ${LICENSE_KEY:0:8}***\nDomain: $DOMAIN\nProtocol: $PROTOCOL\nFull URL: ${PROTOCOL}://$DOMAIN\nInstall Directory: $INSTALL_DIR\nDatabase: $DB_FULL_NAME\nDB User: $DB_USER_FULL\n\nProceed with installation?" 18 70
     if [ $? -ne 0 ]; then
-        whiptail --title "Cancelled" --msgbox "Installation cancelled by user." 10 60
+        dialog --title "Cancelled" --msgbox "Installation cancelled by user." 10 60
         exit 0
     fi
 }
 
 get_update_input() {
     while true; do
-        LICENSE_KEY=$(whiptail --title "License Key" --inputbox "Enter your DezerX license key:" 10 60 "" 3>&1 1>&2 2>&3)
+        LICENSE_KEY=$(dialog --title "License Key" --inputbox "Enter your DezerX license key:" 10 60 "" 3>&1 1>&2 2>&3)
         if [[ -n "$LICENSE_KEY" && ${#LICENSE_KEY} -ge 10 ]]; then
             break
         else
-            whiptail --title "Error" --msgbox "License key must be at least 10 characters. Please try again." 10 60
+            dialog --title "Error" --msgbox "License key must be at least 10 characters. Please try again." 10 60
         fi
     done
 
     while true; do
-        DOMAIN=$(whiptail --title "Domain" --inputbox "Enter your domain:\n(e.g., example.com or app.example.com)\n\nDo NOT include http:// or https://" 12 70 "" 3>&1 1>&2 2>&3)
+        DOMAIN=$(dialog --title "Domain" --inputbox "Enter your domain:\n(e.g., example.com or app.example.com)\n\nDo NOT include http:// or https://" 12 70 "" 3>&1 1>&2 2>&3)
         if [[ -z "$DOMAIN" ]]; then
-            whiptail --title "Error" --msgbox "Domain cannot be empty." 10 60
+            dialog --title "Error" --msgbox "Domain cannot be empty." 10 60
             continue
         fi
 
         validate_domain "$DOMAIN"
         local validation_result=$?
         if [[ $validation_result -eq 2 ]]; then
-            whiptail --title "Error" --msgbox "Please enter the domain WITHOUT http:// or https://\n\nExample: Use 'example.com' instead of 'https://example.com'" 10 70
+            dialog --title "Error" --msgbox "Please enter the domain WITHOUT http:// or https://\n\nExample: Use 'example.com' instead of 'https://example.com'" 10 70
             continue
         elif [[ $validation_result -eq 1 ]]; then
-            whiptail --title "Error" --msgbox "Invalid domain format. Please try again." 10 60
+            dialog --title "Error" --msgbox "Invalid domain format. Please try again." 10 60
             continue
         else
             break
         fi
     done
 
-    PROTOCOL=$(whiptail --title "Protocol" --radiolist "Choose protocol:" 12 60 2 \
-        "https" "HTTPS - Secure (recommended)" ON \
-        "http" "HTTP - Insecure" OFF 3>&1 1>&2 2>&3)
+    PROTOCOL=$(dialog --title "Protocol" --radiolist "Choose protocol:" 12 60 2 \
+        "https" "HTTPS - Secure (recommended)" on \
+        "http" "HTTP - Insecure" off 3>&1 1>&2 2>&3)
 
     while true; do
-        INSTALL_DIR=$(whiptail --title "Installation Directory" --inputbox "Enter your existing DezerX directory:" 10 60 "/var/www/DezerX" 3>&1 1>&2 2>&3)
+        INSTALL_DIR=$(dialog --title "Installation Directory" --inputbox "Enter your existing DezerX directory:" 10 60 "/var/www/DezerX" 3>&1 1>&2 2>&3)
         if [[ -z "$INSTALL_DIR" ]]; then
             INSTALL_DIR="/var/www/DezerX"
         fi
 
         if [[ ! -d "$INSTALL_DIR" ]]; then
-            whiptail --title "Error" --msgbox "Directory $INSTALL_DIR does not exist. Please check the path." 10 60
+            dialog --title "Error" --msgbox "Directory $INSTALL_DIR does not exist. Please check the path." 10 60
             continue
         fi
 
         if [[ ! -f "$INSTALL_DIR/.env" ]]; then
-            whiptail --title "Error" --msgbox "No .env file found in $INSTALL_DIR.\nThis doesn't appear to be a DezerX installation." 10 70
+            dialog --title "Error" --msgbox "No .env file found in $INSTALL_DIR.\nThis doesn't appear to be a DezerX installation." 10 70
             continue
         fi
 
         if [[ ! -f "$INSTALL_DIR/artisan" ]]; then
-            whiptail --title "Error" --msgbox "No artisan file found in $INSTALL_DIR.\nThis doesn't appear to be a Laravel/DezerX installation." 10 70
+            dialog --title "Error" --msgbox "No artisan file found in $INSTALL_DIR.\nThis doesn't appear to be a Laravel/DezerX installation." 10 70
             continue
         fi
         break
     done
 
-    whiptail --title "Update Summary" --yesno "Please confirm your update settings:\n\nLicense Key: ${LICENSE_KEY:0:8}***\nDomain: $DOMAIN\nProtocol: $PROTOCOL\nExisting Directory: $INSTALL_DIR\n\nProceed with update?" 15 70
+    dialog --title "Update Summary" --yesno "Please confirm your update settings:\n\nLicense Key: ${LICENSE_KEY:0:8}***\nDomain: $DOMAIN\nProtocol: $PROTOCOL\nExisting Directory: $INSTALL_DIR\n\nProceed with update?" 15 70
     if [ $? -ne 0 ]; then
-        whiptail --title "Cancelled" --msgbox "Update cancelled by user." 10 60
+        dialog --title "Cancelled" --msgbox "Update cancelled by user." 10 60
         exit 0
     fi
 }
 
 verify_license() {
-    whiptail --title "License Verification" --infobox "Contacting DezerX license server..." 10 60
+    dialog --title "License Verification" --infobox "Contacting DezerX license server..." 10 60
 
     local temp_file=$(mktemp)
     local http_code
@@ -403,7 +410,7 @@ verify_license() {
         https://market.dezerx.com/api/v1/verify)
 
     if [[ "$http_code" == "200" ]]; then
-        whiptail --title "Success" --msgbox "License verified successfully!" 10 60
+        dialog --title "Success" --msgbox "License verified successfully!" 10 60
         rm -f "$temp_file"
         return 0
     else
@@ -411,32 +418,32 @@ verify_license() {
         if [[ -f "$temp_file" ]]; then
             error_msg=$(cat "$temp_file" 2>/dev/null || echo "Unknown error")
         fi
-        whiptail --title "License Error" --msgbox "License verification failed (HTTP: $http_code)\n\nServer response: $error_msg\n\nPlease check your license key and domain." 15 70
+        dialog --title "License Error" --msgbox "License verification failed (HTTP: $http_code)\n\nServer response: $error_msg\n\nPlease check your license key and domain." 15 70
         rm -f "$temp_file"
         exit 1
     fi
 }
 
 create_backup() {
-    whiptail --title "Creating Backup" --infobox "Creating backup of existing installation..." 10 60
+    dialog --title "Creating Backup" --infobox "Creating backup of existing installation..." 10 60
 
     BACKUP_DIR="/tmp/dezerx-backup-$(date +%Y%m%d-%H%M%S)"
     execute_with_loading "cp -r $INSTALL_DIR $BACKUP_DIR" "Creating backup"
 
     if [[ ! -f "$BACKUP_DIR/.env" ]]; then
-        whiptail --title "Error" --msgbox "Backup verification failed - .env file not found in backup" 10 60
+        dialog --title "Error" --msgbox "Backup verification failed - .env file not found in backup" 10 60
         exit 1
     fi
 
-    whiptail --title "Backup Complete" --msgbox "Backup created successfully!\n\nLocation: $BACKUP_DIR" 10 70
+    dialog --title "Backup Complete" --msgbox "Backup created successfully!\n\nLocation: $BACKUP_DIR" 10 70
 }
 
 backup_database() {
-    whiptail --title "Database Backup" --infobox "Backing up database..." 10 60
+    dialog --title "Database Backup" --infobox "Backing up database..." 10 60
 
     local env_file="$INSTALL_DIR/.env"
     if [[ ! -f "$env_file" ]]; then
-        whiptail --title "Warning" --msgbox ".env file not found. Skipping database backup." 10 60
+        dialog --title "Warning" --msgbox ".env file not found. Skipping database backup." 10 60
         return 0
     fi
 
@@ -447,12 +454,12 @@ backup_database() {
     local db_password=$(grep '^DB_PASSWORD=' "$env_file" | cut -d '=' -f2- | tr -d '"' || echo "")
 
     if [[ "$db_connection" != "mysql" ]]; then
-        whiptail --title "Warning" --msgbox "Database connection is not 'mysql'. Skipping database backup." 10 60
+        dialog --title "Warning" --msgbox "Database connection is not 'mysql'. Skipping database backup." 10 60
         return 0
     fi
 
     if [[ -z "$db_host" || -z "$db_database" || -z "$db_username" ]]; then
-        whiptail --title "Error" --msgbox "Missing database credentials in .env file. Cannot perform database backup." 10 60
+        dialog --title "Error" --msgbox "Missing database credentials in .env file. Cannot perform database backup." 10 60
         exit 1
     fi
 
@@ -464,7 +471,7 @@ backup_database() {
     local mysqldump_cmd="mysqldump -h $db_host -u $db_username $db_database | gzip > \"$DB_BACKUP_FILE\""
 
     if ! command -v mysqldump &>/dev/null; then
-        whiptail --title "Error" --msgbox "mysqldump command not found. Cannot perform database backup." 10 60
+        dialog --title "Error" --msgbox "mysqldump command not found. Cannot perform database backup." 10 60
         unset MYSQL_PWD
         exit 1
     fi
@@ -473,15 +480,15 @@ backup_database() {
     unset MYSQL_PWD
 
     if [[ ! -s "$DB_BACKUP_FILE" ]]; then
-        whiptail --title "Error" --msgbox "Database backup file is empty or not created!" 10 60
+        dialog --title "Error" --msgbox "Database backup file is empty or not created!" 10 60
         return 1
     fi
 
-    whiptail --title "Database Backup" --msgbox "Database backup completed successfully!\n\nLocation: $DB_BACKUP_FILE" 12 70
+    dialog --title "Database Backup" --msgbox "Database backup completed successfully!\n\nLocation: $DB_BACKUP_FILE" 12 70
 }
 
 restore_backup() {
-    whiptail --title "Restoring Backup" --infobox "Restoring from backup due to update failure..." 10 60
+    dialog --title "Restoring Backup" --infobox "Restoring from backup due to update failure..." 10 60
 
     if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
         rm -rf "$INSTALL_DIR"
@@ -490,14 +497,14 @@ restore_backup() {
         chmod -R 755 "$INSTALL_DIR" 2>/dev/null || true
         chmod -R 775 "$INSTALL_DIR/storage" 2>/dev/null || true
         chmod -R 775 "$INSTALL_DIR/bootstrap/cache" 2>/dev/null || true
-        whiptail --title "Backup Restored" --msgbox "Backup restored successfully!\nYour original installation has been restored." 10 60
+        dialog --title "Backup Restored" --msgbox "Backup restored successfully!\nYour original installation has been restored." 10 60
     else
-        whiptail --title "Error" --msgbox "No backup found to restore from!" 10 60
+        dialog --title "Error" --msgbox "No backup found to restore from!" 10 60
     fi
 }
 
 install_dependencies() {
-    whiptail --title "Installing Dependencies" --infobox "Installing system dependencies..." 10 60
+    dialog --title "Installing Dependencies" --infobox "Installing system dependencies..." 10 60
 
     execute_with_loading "apt-get update" "Updating package lists"
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y" "Upgrading system packages"
@@ -505,7 +512,7 @@ install_dependencies() {
 
     # Add repositories
     if ! LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>"$LOG_FILE" 2>&1; then
-        whiptail --title "Warning" --msgbox "Failed to add PHP PPA, trying alternative method..." 10 60
+        dialog --title "Warning" --msgbox "Failed to add PHP PPA, trying alternative method..." 10 60
     fi
 
     curl -fsSL https://packages.redis.io/gpg | gpg --dearmor >/usr/share/keyrings/redis-archive-keyring.gpg 2>/dev/null
@@ -526,11 +533,11 @@ install_dependencies() {
 
     execute_with_loading "mkdir -p /var/www" "Creating web directory"
 
-    whiptail --title "Dependencies" --msgbox "System dependencies installed successfully!" 10 60
+    dialog --title "Dependencies" --msgbox "System dependencies installed successfully!" 10 60
 }
 
 install_composer() {
-    whiptail --title "Installing Composer" --infobox "Installing Composer..." 10 60
+    dialog --title "Installing Composer" --infobox "Installing Composer..." 10 60
 
     local composer_installer="/tmp/composer-installer.php"
     execute_with_loading "curl -sS https://getcomposer.org/installer -o $composer_installer" "Downloading Composer"
@@ -539,15 +546,15 @@ install_composer() {
     rm -f "$composer_installer"
 
     if ! command -v composer &>/dev/null; then
-        whiptail --title "Error" --msgbox "Composer installation failed" 10 60
+        dialog --title "Error" --msgbox "Composer installation failed" 10 60
         exit 1
     fi
 
-    whiptail --title "Composer" --msgbox "Composer installed successfully!" 10 60
+    dialog --title "Composer" --msgbox "Composer installed successfully!" 10 60
 }
 
 setup_database() {
-    whiptail --title "Setting up Database" --infobox "Configuring MariaDB..." 10 60
+    dialog --title "Setting up Database" --infobox "Configuring MariaDB..." 10 60
 
     execute_with_loading "systemctl start mariadb && systemctl enable mariadb" "Starting MariaDB"
 
@@ -562,7 +569,7 @@ FLUSH PRIVILEGES;
 EOF
 
     if ! mariadb <"$sql_file" >>"$LOG_FILE" 2>&1; then
-        whiptail --title "Error" --msgbox "Failed to secure MariaDB installation" 10 60
+        dialog --title "Error" --msgbox "Failed to secure MariaDB installation" 10 60
         rm -f "$sql_file"
         exit 1
     fi
@@ -576,17 +583,17 @@ FLUSH PRIVILEGES;
 EOF
 
     if ! mariadb <"$sql_file" >>"$LOG_FILE" 2>&1; then
-        whiptail --title "Error" --msgbox "Failed to create database and user" 10 60
+        dialog --title "Error" --msgbox "Failed to create database and user" 10 60
         rm -f "$sql_file"
         exit 1
     fi
 
     rm -f "$sql_file"
-    whiptail --title "Database" --msgbox "Database setup completed successfully!\n\nDatabase: $DB_FULL_NAME\nUser: $DB_USER_FULL" 12 70
+    dialog --title "Database" --msgbox "Database setup completed successfully!\n\nDatabase: $DB_FULL_NAME\nUser: $DB_USER_FULL" 12 70
 }
 
 download_dezerx() {
-    whiptail --title "Downloading DezerX" --infobox "Requesting download URL from DezerX servers..." 10 60
+    dialog --title "Downloading DezerX" --infobox "Requesting download URL from DezerX servers..." 10 60
 
     local temp_file=$(mktemp)
     local http_code
@@ -606,7 +613,7 @@ download_dezerx() {
         if [[ -f "$temp_file" ]]; then
             error_msg=$(cat "$temp_file" 2>/dev/null || echo "Unknown error")
         fi
-        whiptail --title "Download Error" --msgbox "Failed to get download URL (HTTP: $http_code)\n\nServer response: $error_msg" 12 70
+        dialog --title "Download Error" --msgbox "Failed to get download URL (HTTP: $http_code)\n\nServer response: $error_msg" 12 70
         rm -f "$temp_file"
         if [[ "$OPERATION_MODE" == "update" ]]; then
             restore_backup
@@ -624,7 +631,7 @@ download_dezerx() {
     rm -f "$temp_file"
 
     if [[ -z "$download_url" || "$download_url" == "null" ]]; then
-        whiptail --title "Error" --msgbox "Failed to extract download URL from server response" 10 60
+        dialog --title "Error" --msgbox "Failed to extract download URL from server response" 10 60
         if [[ "$OPERATION_MODE" == "update" ]]; then
             restore_backup
         fi
@@ -636,10 +643,10 @@ download_dezerx() {
     fi
 
     local download_file="/tmp/dezerx-$(date +%s).zip"
-    whiptail --title "Downloading" --infobox "Downloading DezerX package..." 10 60
+    dialog --title "Downloading" --infobox "Downloading DezerX package..." 10 60
 
     if ! curl -L -o "$download_file" --progress-bar --connect-timeout 30 --max-time 300 "$download_url"; then
-        whiptail --title "Error" --msgbox "Download failed" 10 60
+        dialog --title "Error" --msgbox "Download failed" 10 60
         rm -f "$download_file"
         if [[ "$OPERATION_MODE" == "update" ]]; then
             restore_backup
@@ -650,7 +657,7 @@ download_dezerx() {
     # Extract and install
     local temp_extract_dir=$(mktemp -d)
     if ! unzip -q "$download_file" -d "$temp_extract_dir"; then
-        whiptail --title "Error" --msgbox "Failed to extract files" 10 60
+        dialog --title "Error" --msgbox "Failed to extract files" 10 60
         rm -f "$download_file"
         rm -rf "$temp_extract_dir"
         if [[ "$OPERATION_MODE" == "update" ]]; then
@@ -669,7 +676,7 @@ download_dezerx() {
     done < <(find "$temp_extract_dir" -maxdepth 1 -type d -name "*DezerX*" -print0)
 
     if [[ ${#found_dirs[@]} -eq 0 ]]; then
-        whiptail --title "Error" --msgbox "No DezerX directory found in the extracted archive" 10 60
+        dialog --title "Error" --msgbox "No DezerX directory found in the extracted archive" 10 60
         rm -rf "$temp_extract_dir"
         if [[ "$OPERATION_MODE" == "update" ]]; then
             restore_backup
@@ -679,7 +686,7 @@ download_dezerx() {
 
     dezerx_source_dir="${found_dirs[0]}"
     if [[ ! -f "$dezerx_source_dir/.env.example" ]]; then
-        whiptail --title "Error" --msgbox "Invalid DezerX package - .env.example not found" 10 60
+        dialog --title "Error" --msgbox "Invalid DezerX package - .env.example not found" 10 60
         rm -rf "$temp_extract_dir"
         if [[ "$OPERATION_MODE" == "update" ]]; then
             restore_backup
@@ -692,7 +699,7 @@ download_dezerx() {
         rm -rf "$INSTALL_DIR"
         mkdir -p "$INSTALL_DIR"
         if ! mv "$dezerx_source_dir"/* "$INSTALL_DIR"/; then
-            whiptail --title "Error" --msgbox "Failed to move DezerX files to installation directory" 10 60
+            dialog --title "Error" --msgbox "Failed to move DezerX files to installation directory" 10 60
             rm -rf "$temp_extract_dir"
             exit 1
         fi
@@ -703,7 +710,7 @@ download_dezerx() {
         fi
     else
         if ! rsync -a --exclude='.env.example' --exclude='storage' "$dezerx_source_dir"/ "$INSTALL_DIR"/; then
-            whiptail --title "Error" --msgbox "Failed to copy updated files to installation directory" 10 60
+            dialog --title "Error" --msgbox "Failed to copy updated files to installation directory" 10 60
             rm -rf "$temp_extract_dir"
             restore_backup
             exit 1
@@ -711,7 +718,7 @@ download_dezerx() {
     fi
 
     rm -rf "$temp_extract_dir"
-    whiptail --title "Download Complete" --msgbox "DezerX files downloaded and extracted successfully!" 10 60
+    dialog --title "Download Complete" --msgbox "DezerX files downloaded and extracted successfully!" 10 60
 }
 
 update_env_file() {
@@ -759,19 +766,19 @@ sync_env_files() {
 }
 
 configure_laravel() {
-    whiptail --title "Configuring Laravel" --infobox "Configuring Laravel application..." 10 60
+    dialog --title "Configuring Laravel" --infobox "Configuring Laravel application..." 10 60
 
     cd "$INSTALL_DIR"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
         if [[ ! -f ".env.example" ]]; then
-            whiptail --title "Error" --msgbox ".env.example file not found in $INSTALL_DIR" 10 60
+            dialog --title "Error" --msgbox ".env.example file not found in $INSTALL_DIR" 10 60
             exit 1
         fi
         execute_with_loading "cp .env.example .env" "Creating environment file"
     else
         if [[ ! -f ".env" ]]; then
-            whiptail --title "Error" --msgbox ".env file not found in $INSTALL_DIR" 10 60
+            dialog --title "Error" --msgbox ".env file not found in $INSTALL_DIR" 10 60
             restore_backup
             exit 1
         fi
@@ -779,13 +786,13 @@ configure_laravel() {
     fi
 
     # Install composer dependencies
-    whiptail --title "Composer" --infobox "Installing Composer dependencies..." 10 60
+    dialog --title "Composer" --infobox "Installing Composer dependencies..." 10 60
     echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
     local composer_pid=$!
     show_loading $composer_pid "Installing Composer dependencies"
     wait $composer_pid
     if [ $? -ne 0 ]; then
-        whiptail --title "Error" --msgbox "Composer installation failed\nCheck log file: $LOG_FILE" 10 60
+        dialog --title "Error" --msgbox "Composer installation failed\nCheck log file: $LOG_FILE" 10 60
         if [[ "$OPERATION_MODE" == "update" ]]; then
             restore_backup
         fi
@@ -809,40 +816,40 @@ configure_laravel() {
         update_env_file "KEY" "$LICENSE_KEY" ".env"
     fi
 
-    whiptail --title "Laravel" --msgbox "Laravel configuration completed successfully!" 10 60
+    dialog --title "Laravel" --msgbox "Laravel configuration completed successfully!" 10 60
 }
 
 check_dns() {
     local server_ip=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 ipinfo.io/ip || echo "Unable to detect")
 
-    if ! whiptail --title "DNS Configuration" --yesno "Server IP Address: $server_ip\nDomain: $DOMAIN\n\nHave you pointed $DOMAIN to this server's IP address?\n\nSelect 'No' if you need instructions." 12 70; then
-        whiptail --title "DNS Instructions" --msgbox "Please configure your DNS settings:\n\n1. Log into your domain registrar or DNS provider\n2. Create an A record pointing $DOMAIN to $server_ip\n3. Wait for DNS propagation (usually 5-30 minutes)\n\nPress OK when DNS is configured..." 15 70
+    if ! dialog --title "DNS Configuration" --yesno "Server IP Address: $server_ip\nDomain: $DOMAIN\n\nHave you pointed $DOMAIN to this server's IP address?\n\nSelect 'No' if you need instructions." 12 70; then
+        dialog --title "DNS Instructions" --msgbox "Please configure your DNS settings:\n\n1. Log into your domain registrar or DNS provider\n2. Create an A record pointing $DOMAIN to $server_ip\n3. Wait for DNS propagation (usually 5-30 minutes)\n\nPress OK when DNS is configured..." 15 70
     fi
 }
 
 prompt_ufw_firewall() {
     if ! command -v ufw &>/dev/null; then
-        whiptail --title "Firewall" --msgbox "ufw (Uncomplicated Firewall) is not installed.\nSkipping firewall configuration." 10 60
+        dialog --title "Firewall" --msgbox "ufw (Uncomplicated Firewall) is not installed.\nSkipping firewall configuration." 10 60
         return
     fi
 
-    if whiptail --title "Firewall Configuration" --yesno "Would you like to automatically configure the firewall (ufw) to allow HTTP/HTTPS traffic?" 10 60; then
+    if dialog --title "Firewall Configuration" --yesno "Would you like to automatically configure the firewall (ufw) to allow HTTP/HTTPS traffic?" 10 60; then
         execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting UFW"
         ufw allow 80/tcp >>"$LOG_FILE" 2>&1
         ufw allow 443/tcp >>"$LOG_FILE" 2>&1
         ufw reload >>"$LOG_FILE" 2>&1
-        whiptail --title "Firewall" --msgbox "UFW configured to allow HTTP/HTTPS traffic." 10 60
+        dialog --title "Firewall" --msgbox "UFW configured to allow HTTP/HTTPS traffic." 10 60
     else
-        whiptail --title "Firewall" --msgbox "Skipped UFW firewall configuration.\nMake sure ports 80 and 443 are open." 10 60
-        if whiptail --title "Firewall" --yesno "Do you want ufw to be started and enabled (without opening ports)?" 10 60; then
+        dialog --title "Firewall" --msgbox "Skipped UFW firewall configuration.\nMake sure ports 80 and 443 are open." 10 60
+        if dialog --title "Firewall" --yesno "Do you want ufw to be started and enabled (without opening ports)?" 10 60; then
             execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting UFW"
-            whiptail --title "Firewall" --msgbox "UFW started and enabled, but no ports were opened." 10 60
+            dialog --title "Firewall" --msgbox "UFW started and enabled, but no ports were opened." 10 60
         fi
     fi
 }
 
 setup_ssl() {
-    whiptail --title "SSL Certificate" --infobox "Setting up SSL certificate..." 10 60
+    dialog --title "SSL Certificate" --infobox "Setting up SSL certificate..." 10 60
 
     execute_with_loading "apt-get install -y certbot python3-certbot-nginx" "Installing Certbot"
 
@@ -863,22 +870,22 @@ EOF
     systemctl reload nginx
 
     if ! certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "admin@$DOMAIN" --no-eff-email; then
-        whiptail --title "SSL Error" --msgbox "Failed to obtain SSL certificate\n\nPlease ensure:\n1. Domain $DOMAIN points to this server\n2. Ports 80 and 443 are open\n3. No firewall is blocking the connection" 15 70
+        dialog --title "SSL Error" --msgbox "Failed to obtain SSL certificate\n\nPlease ensure:\n1. Domain $DOMAIN points to this server\n2. Ports 80 and 443 are open\n3. No firewall is blocking the connection" 15 70
         exit 1
     fi
 
     rm -f /etc/nginx/sites-enabled/temp-dezerx
     rm -f /etc/nginx/sites-available/temp-dezerx
 
-    whiptail --title "SSL" --msgbox "SSL certificate obtained successfully!" 10 60
+    dialog --title "SSL" --msgbox "SSL certificate obtained successfully!" 10 60
 }
 
 setup_ssl_skip() {
-    whiptail --title "SSL Certificate" --msgbox "You selected HTTP. Skipping SSL certificate setup." 10 60
+    dialog --title "SSL Certificate" --msgbox "You selected HTTP. Skipping SSL certificate setup." 10 60
 }
 
 configure_nginx() {
-    whiptail --title "Configuring Nginx" --infobox "Setting up Nginx configuration..." 10 60
+    dialog --title "Configuring Nginx" --infobox "Setting up Nginx configuration..." 10 60
 
     rm -f /etc/nginx/sites-available/default
     rm -f /etc/nginx/sites-enabled/default
@@ -949,16 +956,16 @@ EOF
     ln -sf /etc/nginx/sites-available/dezerx.conf /etc/nginx/sites-enabled/dezerx.conf
 
     if ! nginx -t >>"$LOG_FILE" 2>&1; then
-        whiptail --title "Error" --msgbox "Nginx configuration test failed" 10 60
+        dialog --title "Error" --msgbox "Nginx configuration test failed" 10 60
         exit 1
     fi
 
     execute_with_loading "systemctl restart nginx" "Restarting Nginx"
-    whiptail --title "Nginx" --msgbox "Nginx configured successfully!" 10 60
+    dialog --title "Nginx" --msgbox "Nginx configured successfully!" 10 60
 }
 
 install_nodejs_and_build() {
-    whiptail --title "Building Assets" --infobox "Installing Node.js and building assets..." 10 60
+    dialog --title "Building Assets" --infobox "Installing Node.js and building assets..." 10 60
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
         execute_with_loading "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -" "Adding Node.js repository"
@@ -972,11 +979,11 @@ install_nodejs_and_build() {
         execute_with_loading "npm run build" "Building assets"
     fi
 
-    whiptail --title "Assets" --msgbox "Assets built successfully!" 10 60
+    dialog --title "Assets" --msgbox "Assets built successfully!" 10 60
 }
 
 set_permissions() {
-    whiptail --title "Setting Permissions" --infobox "Setting file permissions..." 10 60
+    dialog --title "Setting Permissions" --infobox "Setting file permissions..." 10 60
 
     execute_with_loading "chown -R www-data:www-data $INSTALL_DIR" "Setting ownership"
     execute_with_loading "chmod -R 755 $INSTALL_DIR" "Setting base permissions"
@@ -988,16 +995,16 @@ set_permissions() {
         execute_with_loading "chown -R www-data:www-data $INSTALL_DIR/.[^.]*" "Hidden files ownership"
     fi
 
-    whiptail --title "Permissions" --msgbox "File permissions set successfully!" 10 60
+    dialog --title "Permissions" --msgbox "File permissions set successfully!" 10 60
 }
 
 run_migrations() {
-    whiptail --title "Database Migrations" --infobox "Running database migrations..." 10 60
+    dialog --title "Database Migrations" --infobox "Running database migrations..." 10 60
 
     cd "$INSTALL_DIR"
 
     if ! sudo -u www-data php artisan migrate --force >>"$LOG_FILE" 2>&1; then
-        whiptail --title "Migration Error" --msgbox "Database migration failed!\n\nCheck the log file: $LOG_FILE" 12 70
+        dialog --title "Migration Error" --msgbox "Database migration failed!\n\nCheck the log file: $LOG_FILE" 12 70
         if [[ "$OPERATION_MODE" == "update" ]]; then
             if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
                 restore_backup
@@ -1007,7 +1014,7 @@ run_migrations() {
     fi
 
     if ! sudo -u www-data php artisan db:seed --force >>"$LOG_FILE" 2>&1; then
-        whiptail --title "Seeding Error" --msgbox "Database seeding failed!\n\nCheck the log file: $LOG_FILE" 12 70
+        dialog --title "Seeding Error" --msgbox "Database seeding failed!\n\nCheck the log file: $LOG_FILE" 12 70
         if [[ "$OPERATION_MODE" == "update" ]]; then
             if [[ "$RESTORE_ON_FAILURE" == "yes" ]]; then
                 restore_backup
@@ -1017,11 +1024,11 @@ run_migrations() {
     fi
 
     chown -R www-data:www-data "$INSTALL_DIR" 2>/dev/null || true
-    whiptail --title "Migrations" --msgbox "Database migrations completed successfully!" 10 60
+    dialog --title "Migrations" --msgbox "Database migrations completed successfully!" 10 60
 }
 
 setup_cron() {
-    whiptail --title "Setting up Cron" --infobox "Configuring cron jobs..." 10 60
+    dialog --title "Setting up Cron" --infobox "Configuring cron jobs..." 10 60
 
     local temp_cron_file=$(mktemp)
 
@@ -1043,16 +1050,19 @@ setup_cron() {
     # Add SSL renewal cronjob if HTTPS is selected
     if [[ "$PROTOCOL" == "https" ]] && command -v certbot &>/dev/null; then
         if ! crontab -l 2>/dev/null | grep -q 'certbot renew --quiet --deploy-hook "systemctl restart nginx"'; then
-            (crontab -l 2>/dev/null; echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"') | crontab -
+            (
+                crontab -l 2>/dev/null
+                echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"'
+            ) | crontab -
         fi
     fi
 
     systemctl start cron 2>/dev/null || true
-    whiptail --title "Cron" --msgbox "Cron jobs configured successfully!" 10 60
+    dialog --title "Cron" --msgbox "Cron jobs configured successfully!" 10 60
 }
 
 setup_queue_worker() {
-    whiptail --title "Queue Worker" --infobox "Setting up queue worker service..." 10 60
+    dialog --title "Queue Worker" --infobox "Setting up queue worker service..." 10 60
 
     cat >/etc/systemd/system/dezerx.service <<EOF
 [Unit]
@@ -1075,7 +1085,7 @@ EOF
     execute_with_loading "systemctl enable dezerx.service" "Enabling DezerX service"
     execute_with_loading "systemctl start dezerx.service" "Starting DezerX service"
 
-    whiptail --title "Queue Worker" --msgbox "Queue worker service configured successfully!" 10 60
+    dialog --title "Queue Worker" --msgbox "Queue worker service configured successfully!" 10 60
 }
 
 cleanup_backup() {
@@ -1098,20 +1108,20 @@ print_summary() {
     local summary_text="$emoji $operation_text completed successfully!\n\nDezerX Details:\n"
     summary_text+="• URL: ${PROTOCOL}://$DOMAIN\n"
     summary_text+="• Directory: $INSTALL_DIR\n"
-    
+
     if [[ "$OPERATION_MODE" == "install" ]]; then
         summary_text+="• Database: $DB_FULL_NAME\n"
         summary_text+="• DB User: $DB_USER_FULL\n"
         summary_text+="• DB Password: $DB_PASSWORD\n"
     fi
-    
+
     summary_text+="• License: ${LICENSE_KEY:0:8}***\n\n"
     summary_text+="Next Steps:\n"
     summary_text+="1. Visit ${PROTOCOL}://$DOMAIN\n"
     summary_text+="2. Complete setup wizard\n"
     summary_text+="3. Configure your application"
 
-    whiptail --title "$operation_text Complete" --msgbox "$summary_text" 20 70
+    dialog --title "$operation_text Complete" --msgbox "$summary_text" 20 70
 
     # Save installation info
     local info_file="$INSTALL_DIR/${operation_text^^}_INFO.txt"
@@ -1142,8 +1152,8 @@ EOF
 }
 
 cleanup_on_error() {
-    whiptail --title "Error" --msgbox "Operation failed at line $1\n\nCheck the log file: $LOG_FILE" 12 70
-    
+    dialog --title "Error" --msgbox "Operation failed at line $1\n\nCheck the log file: $LOG_FILE" 12 70
+
     if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then
         restore_backup
     fi
