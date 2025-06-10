@@ -122,11 +122,42 @@ execute_with_loading() {
         print_error "Check log file: $LOG_FILE"
         # Consider not exiting here directly but returning the error,
         # letting the caller decide, or rely on the ERR trap.
-        # For now, keeping the exit as it was.
-        exit $exit_code
+        return $exit_code # MODIFIED FROM exit $exit_code
     fi
 
     return $exit_code
+}
+
+execute_as_www_data() {
+    local command_to_execute="$1"
+    local loading_message="$2"
+    local actual_command_string
+
+    if id "www-data" &>/dev/null; then
+        if command -v sudo &>/dev/null; then
+            actual_command_string="sudo -u www-data $command_to_execute"
+            execute_with_loading "$actual_command_string" "$loading_message (as www-data via sudo)"
+        elif [[ $EUID -eq 0 ]]; then # Already root, use su
+            # Ensure command_to_execute is properly quoted for su -c
+            # Basic quoting for simple commands; complex commands might need more care
+            local escaped_command_to_execute=$(printf "%q" "$command_to_execute")
+            if [[ "$command_to_execute" == *\;* || "$command_to_execute" == *\|\|* || "$command_to_execute" == *\&\&* ]]; then
+                # For complex commands, wrap in sh -c if not already
+                if [[ ! ("$command_to_execute" == sh\ -c\ *) && ! ("$command_to_execute" == bash\ -c\ *) ]]; then
+                    escaped_command_to_execute=$(printf "sh -c %q" "$command_to_execute")
+                fi
+            fi
+            actual_command_string="su -s /bin/bash -c $escaped_command_to_execute www-data"
+            execute_with_loading "$actual_command_string" "$loading_message (as www-data via su)"
+        else
+            print_warning "Cannot switch to www-data: sudo not found and not root. Running as current user."
+            execute_with_loading "$command_to_execute" "$loading_message (as current user)"
+        fi
+    else
+        print_warning "User www-data not found. Running as current user. Check permissions later."
+        execute_with_loading "$command_to_execute" "$loading_message (as current user)"
+    fi
+    return $? # Return the exit code from execute_with_loading
 }
 
 print_banner() {
@@ -1384,30 +1415,24 @@ configure_laravel() {
     # --no-interaction for non-interactive, --no-dev for production, --prefer-dist for speed
     local composer_command="composer install --no-interaction --no-dev --optimize-autoloader --prefer-dist"
 
-    # Run composer as www-data if possible, to avoid permission issues later
-    if id "www-data" &>/dev/null; then
-        execute_with_loading "sudo -u www-data $composer_command" "Installing Composer dependencies as www-data"
-    else
-        print_warning "User www-data not found. Running Composer as current user. Check file permissions later."
-        execute_with_loading "$composer_command" "Installing Composer dependencies"
+    execute_as_www_data "$composer_command" "Installing Composer dependencies"
+    # Check composer exit code from execute_as_www_data if needed (it returns the code)
+    local composer_exit_code=$?
+    if [ $composer_exit_code -ne 0 ]; then
+        print_error "Composer dependencies installation failed with exit code $composer_exit_code."
+        # The ERR trap will handle script exit if set -e is active.
+        # If we want to attempt restore here specifically:
+        # if [[ "$OPERATION_MODE" == "update" && "$RESTORE_ON_FAILURE" == "yes" ]]; then restore_backup; restore_database; fi
+        return $composer_exit_code # Propagate error
     fi
-    # Check composer exit code from execute_with_loading if needed (it exits on failure)
 
     print_success "Composer dependencies installed/updated successfully!"
     print_info "Continuing with Laravel configuration..."
 
-    # Link storage (run as www-data if possible)
-    local artisan_cmd_prefix=""
-    if id "www-data" &>/dev/null; then
-        artisan_cmd_prefix="sudo -u www-data php artisan"
-    else
-        artisan_cmd_prefix="php artisan"
-    fi
-
-    execute_with_loading "$artisan_cmd_prefix storage:link" "Linking storage directory"
+    execute_as_www_data "php artisan storage:link" "Linking storage directory"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        execute_with_loading "$artisan_cmd_prefix key:generate --force" "Generating application key"
+        execute_as_www_data "php artisan key:generate --force" "Generating application key"
 
         print_info "Updating .env file with installation details..."
         update_env_file "APP_NAME" "DezerX" ".env"
@@ -1825,21 +1850,21 @@ install_nodejs_and_build() {
 
     if [[ -f "package.json" ]]; then
         print_info "Installing npm dependencies (can take a few minutes)..."
-        # Run npm install as www-data if possible, or with --unsafe-perm if running as root and facing permission issues during build scripts
         local npm_install_cmd="npm install"
-        if id "www-data" &>/dev/null; then
-            execute_with_loading "sudo -u www-data $npm_install_cmd" "Installing npm dependencies as www-data"
-        else
-            print_warning "User www-data not found. Running npm install as current user."
-            execute_with_loading "$npm_install_cmd" "Installing npm dependencies"
+        execute_as_www_data "$npm_install_cmd" "Installing npm dependencies"
+        local npm_install_exit_code=$?
+        if [ $npm_install_exit_code -ne 0 ]; then
+            print_error "npm install failed with exit code $npm_install_exit_code."
+            return $npm_install_exit_code
         fi
 
         print_info "Building production assets (can take a few minutes)..."
         local npm_build_cmd="npm run build"
-        if id "www-data" &>/dev/null; then
-            execute_with_loading "sudo -u www-data $npm_build_cmd" "Building assets as www-data"
-        else
-            execute_with_loading "$npm_build_cmd" "Building assets"
+        execute_as_www_data "$npm_build_cmd" "Building assets"
+        local npm_build_exit_code=$?
+        if [ $npm_build_exit_code -ne 0 ]; then
+            print_error "npm run build failed with exit code $npm_build_exit_code."
+            return $npm_build_exit_code
         fi
         print_success "Frontend assets built successfully!"
     else
@@ -1908,19 +1933,11 @@ run_migrations() {
         return 1
     }
 
-    local artisan_cmd_prefix=""
-    if id "www-data" &>/dev/null; then
-        artisan_cmd_prefix="sudo -u www-data php artisan"
-    else
-        artisan_cmd_prefix="php artisan"
-        print_warning "Running artisan commands as current user due to www-data not found."
-    fi
-
     # Temporarily disable exit on error for migrations/seeding to handle errors gracefully
     set +e
     print_info "Running database migrations..."
     # --force is needed for production environments
-    eval "$artisan_cmd_prefix migrate --force" >>"$LOG_FILE" 2>&1
+    execute_as_www_data "php artisan migrate --force" "Running database migrations"
     local migrate_exit_code=$?
     set -e # Re-enable exit on error
 
@@ -1942,7 +1959,7 @@ run_migrations() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
         set +e
         print_info "Running database seeders (for initial setup)..."
-        eval "$artisan_cmd_prefix db:seed --force" >>"$LOG_FILE" 2>&1
+        execute_as_www_data "php artisan db:seed --force" "Running database seeders"
         local seed_exit_code=$?
         set -e
 
@@ -1960,7 +1977,11 @@ run_migrations() {
     fi
 
     # Final permission check after artisan commands
-    set_permissions # Call set_permissions again to ensure everything is correct
+    # set_permissions # Call set_permissions again to ensure everything is correct
+    # Re-calling set_permissions here might be redundant if execute_as_www_data handles permissions correctly
+    # or if the artisan commands themselves create files with correct ownership when run as www-data.
+    # However, it can be a safety measure. For now, let's assume www-data execution handles it.
+    # If specific files created by artisan need different permissions than default, adjust here or in set_permissions.
 
     print_success "Database operations phase completed."
 }
@@ -1979,14 +2000,14 @@ setup_cron() {
         return 1
     fi
 
-    # Check if job already exists for the user
+    # Since check_root ensures script is root, sudo is not needed for crontab -u www-data
     if ! (crontab -u "$user_to_run_cron" -l 2>/dev/null | grep -Fq "artisan schedule:run"); then
         # Add new cron job
         (
             crontab -u "$user_to_run_cron" -l 2>/dev/null
             echo "$cron_job_command"
         ) | crontab -u "$user_to_run_cron" -
-        if crontab -u "$user_to_run_cron" -l | grep -Fq "artisan schedule:run"; then
+        if crontab -u "$user_to_run_cron" -l 2>/dev/null | grep -Fq "artisan schedule:run"; then
             print_success "Laravel scheduler added to crontab for $user_to_run_cron."
         else
             print_error "Failed to add Laravel scheduler to crontab for $user_to_run_cron."
