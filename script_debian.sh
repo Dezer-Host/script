@@ -215,7 +215,7 @@ choose_install_variant() {
     print_step "0" "CHOOSE INSTALLATION VARIANT"
     print_color $CYAN "Please choose the installation variant:"
     print_color $WHITE "1) 🆕 Normal (without a GUI)"
-    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA) (not tested with debian)"
+    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA) (not tested with Debian)"
     echo ""
 
     while true; do
@@ -1548,16 +1548,7 @@ configure_laravel() {
 
     print_info "Optimizing Laravel application..."
     execute_as_www_data "php artisan config:cache" "Caching configuration"
-    execute_as_www_data "php artisan route:cache" "Caching routes"
-    local route_cache_exit_code=$?
-    if [ $route_cache_exit_code -ne 0 ]; then
-        print_error "Laravel route:cache failed. This usually means there are duplicate route names in your application."
-        print_error "Please check your Laravel routes for duplicate names (e.g., [admin.password.confirm]) and ensure each route name is unique."
-        print_info "You can run 'php artisan route:list' in your application directory to help find duplicates."
-        print_info "After fixing the duplicates, re-run this script or run 'php artisan route:cache' manually."
-        # Optionally, exit or continue
-        # exit 1
-    fi
+    # execute_as_www_data "php artisan route:cache" "Caching routes"
     execute_as_www_data "php artisan view:cache" "Caching views"
     # execute_as_www_data "php artisan event:cache" "Caching events" # If using event discovery
 
