@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-readonly SCRIPT_VERSION="2.0"
+readonly SCRIPT_VERSION="0.5 Alpha"
 LOG_FILE="/tmp/dezerx-install.log"
 OPERATION_MODE=""
 LICENSE_KEY=""
