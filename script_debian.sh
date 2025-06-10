@@ -215,7 +215,7 @@ choose_install_variant() {
     print_step "0" "CHOOSE INSTALLATION VARIANT"
     print_color $CYAN "Please choose the installation variant:"
     print_color $WHITE "1) 🆕 Normal (without a GUI)"
-    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA)"
+    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA) (not tested with debian)"
     echo ""
 
     while true; do
