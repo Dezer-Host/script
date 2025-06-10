@@ -132,6 +132,7 @@ choose_operation_mode() {
 handle_deletion() {
     if ! dialog --title "Delete Confirmation" --yesno "This will remove DezerX and all its data permanently!\n\nAre you absolutely sure you want to continue?" 12 70; then
         dialog --title "Cancelled" --msgbox "Deletion cancelled by user." 10 60
+        clear
         exit 0
     fi
 
@@ -142,12 +143,14 @@ handle_deletion() {
 
     if [[ ! -d "$INSTALL_DIR" ]]; then
         dialog --title "Error" --msgbox "Directory $INSTALL_DIR does not exist. Aborting deletion." 10 60
+        clear
         exit 1
     fi
 
     local confirmation_text=$(dialog --title "Final Confirmation" --inputbox "Type 'DELETE EVERYTHING' to confirm deletion of $INSTALL_DIR:" 10 70 "" 3>&1 1>&2 2>&3)
     if [[ "$confirmation_text" != "DELETE EVERYTHING" ]]; then
         dialog --title "Cancelled" --msgbox "Deletion cancelled - confirmation text did not match." 10 60
+        clear
         exit 0
     fi
 
