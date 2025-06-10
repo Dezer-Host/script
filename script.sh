@@ -98,7 +98,7 @@ print_banner() {
 ║     ${BOLD}${WHITE}╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝${NC}${CYAN}         ║
 ║                                                              ║
 ║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}              ║
-║                  🚀 Requires Root Access 🚀                  ║
+║                  🚀 Requires Root Access 🚀                 ║
 ╚══════════════════════════════════════════════════════════════╝
 "
     print_color $YELLOW "📋 This script can install or update DezerX"
@@ -1899,9 +1899,10 @@ main() {
             get_update_input
             verify_license
             create_backup
+            backup_database # <--- ADD THIS LINE
             download_dezerx
-            configure_laravel                                              # This should complete and continue
-            print_info "DEBUG: configure_laravel completed, continuing..." # Add debug message
+            configure_laravel
+            print_info "DEBUG: configure_laravel completed, continuing..."
             install_nodejs_and_build
             set_permissions
             run_migrations
