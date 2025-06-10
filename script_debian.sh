@@ -1624,57 +1624,57 @@ check_dns() {
     return 0
 }
 
-prompt_ufw_firewall() {
-    print_step "11" "FIREWALL CONFIGURATION (UFW)" # Step number consistent for install
-
-    if ! command -v ufw &>/dev/null; then
-        print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
-        print_info "You may need to configure your firewall manually if one is active."
-        return
-    fi
-
-    local ufw_status
-    ufw_status=$(ufw status | grep -o "Status: active")
-
-    print_color $WHITE "Would you like to configure the firewall (ufw) to allow HTTP (port 80) and HTTPS (port 443) traffic? (y/n):"
-    read -r ufw_choice
-    case "$ufw_choice" in
-    [Yy] | [Yy][Ee][Ss])
-        print_info "Configuring UFW..."
-        execute_with_loading "ufw allow 22/tcp" "Allowing SSH (port 22)" # Ensure SSH is allowed
-        execute_with_loading "ufw allow 80/tcp" "Allowing HTTP (port 80)"
-        execute_with_loading "ufw allow 443/tcp" "Allowing HTTPS (port 443)"
-
-        if [[ "$ufw_status" != "Status: active" ]]; then
-            # Pass 'y' to the ufw enable prompt if it asks for confirmation
-            print_info "Enabling UFW..."
-            if echo "y" | ufw enable >>"$LOG_FILE" 2>&1; then
-                print_success "UFW enabled and rules applied."
-            else
-                print_error "Failed to enable UFW. Check $LOG_FILE."
-                # Fallback to trying to start if enable failed but rules might be set
-                if systemctl is-active --quiet ufw || systemctl start ufw; then
-                    print_info "UFW service is active/started."
-                else
-                    print_warning "UFW service could not be started."
-                fi
-            fi
-        else
-            execute_with_loading "ufw reload" "Reloading UFW rules"
-            print_success "UFW rules applied (already active)."
-        fi
-        ;;
-    *)
-        print_warning "Skipped automatic UFW configuration for HTTP/HTTPS ports."
-        print_info "Ensure ports 80 and 443 (and 22 for SSH) are open in your firewall if UFW is active or if you use another firewall."
-        if [[ "$ufw_status" == "Status: active" ]]; then
-            print_info "UFW is currently active. You may need to add rules manually."
-        else
-            print_info "UFW is currently inactive."
-        fi
-        ;;
-    esac
-}
+#prompt_ufw_firewall() {
+#    print_step "11" "FIREWALL CONFIGURATION (UFW)" # Step number consistent for install
+#
+#    if ! command -v ufw &>/dev/null; then
+#        print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
+#        print_info "You may need to configure your firewall manually if one is active."
+#        return
+#    fi
+#
+#    local ufw_status
+#    ufw_status=$(ufw status | grep -o "Status: active")
+#
+#    print_color $WHITE "Would you like to configure the firewall (ufw) to allow HTTP (port 80) and HTTPS (port 443) traffic? (y/n):"
+#    read -r ufw_choice
+#    case "$ufw_choice" in
+#    [Yy] | [Yy][Ee][Ss])
+#        print_info "Configuring UFW..."
+#        execute_with_loading "ufw allow 22/tcp" "Allowing SSH (port 22)" # Ensure SSH is allowed
+#        execute_with_loading "ufw allow 80/tcp" "Allowing HTTP (port 80)"
+#        execute_with_loading "ufw allow 443/tcp" "Allowing HTTPS (port 443)"
+#
+#        if [[ "$ufw_status" != "Status: active" ]]; then
+#            # Pass 'y' to the ufw enable prompt if it asks for confirmation
+#            print_info "Enabling UFW..."
+#            if echo "y" | ufw enable >>"$LOG_FILE" 2>&1; then
+#                print_success "UFW enabled and rules applied."
+#            else
+#                print_error "Failed to enable UFW. Check $LOG_FILE."
+#                # Fallback to trying to start if enable failed but rules might be set
+#                if systemctl is-active --quiet ufw || systemctl start ufw; then
+#                    print_info "UFW service is active/started."
+#                else
+#                    print_warning "UFW service could not be started."
+#                fi
+#            fi
+#        else
+#            execute_with_loading "ufw reload" "Reloading UFW rules"
+#            print_success "UFW rules applied (already active)."
+#        fi
+#        ;;
+#    *)
+#        print_warning "Skipped automatic UFW configuration for HTTP/HTTPS ports."
+#        print_info "Ensure ports 80 and 443 (and 22 for SSH) are open in your firewall if UFW is active or if you use another firewall."
+#        if [[ "$ufw_status" == "Status: active" ]]; then
+#            print_info "UFW is currently active. You may need to add rules manually."
+#        else
+#            print_info "UFW is currently inactive."
+#        fi
+#        ;;
+#    esac
+#}
 
 setup_ssl() {
     # This function is called only if PROTOCOL is "https"
@@ -2335,7 +2335,7 @@ main() {
         download_dezerx
         configure_laravel
         check_dns
-        prompt_ufw_firewall
+        # prompt_ufw_firewall
         if [[ "$PROTOCOL" == "https" ]]; then
             setup_ssl
         else
