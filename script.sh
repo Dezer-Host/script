@@ -247,12 +247,13 @@ choose_operation_mode() {
                     fi
 
                     if [[ -n "$DB_FULL_NAME" ]]; then
-                        print_info "Attempting to remove database and user..."
-                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;" 2>>"$LOG_FILE" || deletion_error=1
+                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME\`;"
                     fi
                     if [[ -n "$DB_USER_FULL" ]]; then
-                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';" 2>>"$LOG_FILE" || deletion_error=1
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'127.0.0.1';"
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL'@'localhost';"
                     fi
+                    mariadb -e "FLUSH PRIVILEGES;"
                     print_success "Database and user removed (if they existed)."
                 fi
 
@@ -545,6 +546,14 @@ get_update_input() {
             continue
         fi
 
+        # --- NEU: DB-Infos aus .env lesen ---
+        DB_FULL_NAME=$(get_env_variable "DB_DATABASE" "$INSTALL_DIR/.env")
+        DB_USER_FULL=$(get_env_variable "DB_USERNAME" "$INSTALL_DIR/.env")
+        DB_PASSWORD=$(get_env_variable "DB_PASSWORD" "$INSTALL_DIR/.env")
+        # Fallback, falls leer:
+        if [[ -z "$DB_FULL_NAME" ]]; then DB_FULL_NAME="dezerx"; fi
+        if [[ -z "$DB_USER_FULL" ]]; then DB_USER_FULL="dezer"; fi
+
         break
     done
 
@@ -807,16 +816,19 @@ setup_database() {
     print_info "Securing MariaDB installation and creating database/user..."
 
     local sql_file=$(mktemp)
-    cat >"$sql_file" <<'EOF'
--- Remove anonymous users
-DROP USER IF EXISTS ''@'%';
-DROP USER IF EXISTS ''@'localhost';
+    cat >"$sql_file" <<EOF
+-- Create the dedicated database for the application
+CREATE DATABASE IF NOT EXISTS \`$DB_FULL_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Remove test database and privileges
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test_%';
+-- Create the dedicated user for the application (both hosts!)
+CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
+CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
 
--- Apply changes
+-- Grant all privileges on the application database to the user (both hosts!)
+GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'localhost' WITH GRANT OPTION;
+
+-- Apply all privilege changes
 FLUSH PRIVILEGES;
 EOF
 
