@@ -166,7 +166,7 @@ print_banner() {
 ║     ${BOLD}${WHITE}██████╔╝███████╗███████╗███████╗██║  ██║██╔╝ ██╗${NC}${CYAN}         ║
 ║     ${BOLD}${WHITE}╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝${NC}${CYAN}         ║
 ║                                                              ║
-║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}        ║
+║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}  ║
 ║                  🚀 Requires Root Access 🚀                  ║
 ╚══════════════════════════════════════════════════════════════╝
 "
