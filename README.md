@@ -91,3 +91,13 @@ You may not copy, distribute, or modify this script for other purposes without e
 If you want to contribute but don't know where to start, check the [TODO](./TODO.md) file for ideas and open tasks.
 
 All rights are reserved by the author.
+
+---
+
+## Contributions
+
+**Main script development and major contributions by:**  
+👑 **Anthony S**
+👑 **KingIronMan2011**
+
+Thank you for your valuable work on DezerX!

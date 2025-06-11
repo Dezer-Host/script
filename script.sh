@@ -1965,6 +1965,15 @@ EOF
     print_info "💾 Operation details saved to: $INSTALL_DIR/$(if [[ "$OPERATION_MODE" == "install" ]]; then echo "INSTALLATION_INFO.txt"; else echo "UPDATE_INFO.txt"; fi)"
 }
 
+show_contributors() {
+    print_color $CYAN "=============================================================="
+    print_color $CYAN "        DezerX Install / Update Script"
+    print_color $CYAN "  Main script development and major contributions by:"
+    print_color $YELLOW "  👑 Anthony S and 👑 KingIronMan2011"
+    print_color $CYAN "=============================================================="
+    echo ""
+}
+
 cleanup_on_error() {
     print_error "Operation failed at line $1"
     print_info "Check the operation log: $LOG_FILE"
@@ -2031,6 +2040,7 @@ main() {
     fi
 
     print_summary
+    show_contributors
     log_message "Operation completed successfully"
 }
 

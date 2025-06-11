@@ -1154,6 +1154,10 @@ EOF
     fi
 }
 
+show_contributors() {
+    dialog --title "Contributors" --msgbox "DezerX Install / Update Script\n\nMain script development and major contributions by:\n\n👑 Anthony S and 👑 KingIronMan2011 S\n" 10 60
+}
+
 cleanup_on_error() {
     dialog --title "Error" --msgbox "Operation failed at line $1\n\nCheck the log file: $LOG_FILE" 12 70
 
@@ -1214,6 +1218,7 @@ main() {
     fi
 
     print_summary
+    show_contributors
     log_message "Operation completed successfully"
 }
 

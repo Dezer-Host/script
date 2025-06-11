@@ -2289,6 +2289,15 @@ print_summary() {
     fi
 }
 
+show_contributors() {
+    print_color $CYAN "=============================================================="
+    print_color $CYAN "        DezerX Install / Update Script"
+    print_color $CYAN "  Main script development and major contributions by:"
+    print_color $YELLOW "  👑 Anthony S and 👑 KingIronMan2011"
+    print_color $CYAN "=============================================================="
+    echo ""
+}
+
 cleanup_on_error() {
     local lineno="$1"
     local command_that_failed="${BASH_COMMAND}" # Get the command that failed
@@ -2359,6 +2368,7 @@ main() {
     fi
 
     print_summary
+    show_contributors
     log_message "Operation completed successfully"
 }
 

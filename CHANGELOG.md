@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.0.0] - 2025-06-11
+## [3.0.0] - 2025-06-11 made by KingIronMan2011
 
 ### Added
 
