@@ -1654,8 +1654,6 @@ configure_firewall() {
         # Ensure nftables is enabled and started
         execute_with_loading "systemctl enable nftables" "Enabling nftables service"
         execute_with_loading "systemctl start nftables" "Starting nftables service"
-
-        print_success "nftables rules added for SSH (22), HTTP (80), and HTTPS (443)."
         ;;
     *)
         print_warning "Skipped automatic nftables configuration for HTTP/HTTPS ports."
@@ -2200,7 +2198,7 @@ print_summary() {
         print_step "$summary_step_num" "INSTALLATION COMPLETE"
         print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
         print_color $GREEN "║                                                              ║"
-        print_color $GREEN "║                 🎉 INSTALLATION SUCCESSFUL! 🎉              ║"
+        print_color $GREEN "║                 🎉 INSTALLATION SUCCESSFUL! 🎉               ║"
         print_color $GREEN "║                                                              ║"
         print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
         print_success "DezerX has been successfully installed!"
@@ -2210,7 +2208,7 @@ print_summary() {
         print_step "$summary_step_num" "UPDATE COMPLETE"
         print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
         print_color $GREEN "║                                                              ║"
-        print_color $GREEN "║                      🎉 UPDATE SUCCESSFUL! 🎉               ║"
+        print_color $GREEN "║                      🎉 UPDATE SUCCESSFUL! 🎉                ║"
         print_color $GREEN "║                                                              ║"
         print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
         print_success "DezerX has been successfully updated!"
