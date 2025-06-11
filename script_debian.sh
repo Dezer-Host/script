@@ -2066,9 +2066,14 @@ setup_cron() {
         return 1
     fi
 
-    # Since check_root ensures script is root, sudo is not needed for crontab -u www-data
+    # Ensure www-data has a shell for crontab
+    if ! grep -q "^www-data:.*:/bin/bash" /etc/passwd; then
+        print_info "Temporarily setting /bin/bash as shell for www-data to allow crontab entry."
+        usermod -s /bin/bash www-data
+    fi
+
+    # Add cron job if not present
     if ! (crontab -u "$user_to_run_cron" -l 2>/dev/null | grep -Fq "artisan schedule:run"); then
-        # Add new cron job
         (
             crontab -u "$user_to_run_cron" -l 2>/dev/null
             echo "$cron_job_command"
