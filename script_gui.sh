@@ -15,7 +15,7 @@ if ! command -v dialog &>/dev/null; then
     fi
 fi
 
-readonly SCRIPT_VERSION="0.5 ALPHA"
+readonly SCRIPT_VERSION="3.0"
 LOG_FILE="/tmp/dezerx-install.log"
 OPERATION_MODE=""
 LICENSE_KEY=""
