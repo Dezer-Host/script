@@ -1663,14 +1663,14 @@ configure_firewall() {
         print_color $WHITE "Would you like to enable and start nftables service anyway? (y/n):"
         read -r enable_choice
         case "$enable_choice" in
-            [Yy] | [Yy][Ee][Ss])
-                execute_with_loading "systemctl enable nftables" "Enabling nftables service"
-                execute_with_loading "systemctl start nftables" "Starting nftables service"
-                print_success "nftables service enabled and started."
-                ;;
-            *)
-                print_info "nftables service was not enabled or started."
-                ;;
+        [Yy] | [Yy][Ee][Ss])
+            execute_with_loading "systemctl enable nftables" "Enabling nftables service"
+            execute_with_loading "systemctl start nftables" "Starting nftables service"
+            print_success "nftables service enabled and started."
+            ;;
+        *)
+            print_info "nftables service was not enabled or started."
+            ;;
         esac
         ;;
     esac
