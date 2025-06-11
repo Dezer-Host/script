@@ -1898,7 +1898,7 @@ install_nodejs_and_build() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
         print_step "14" "INSTALLING NODE.JS AND BUILDING ASSETS"
     else # update
-        print_step "8" "BUILDING FRONTEND ASSETS"
+        print_step "8" "BUILDING ASSETS"
     fi
 
     # Check if Node.js and npm are installed, install if not (especially for fresh install)
