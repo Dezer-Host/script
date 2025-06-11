@@ -20,7 +20,7 @@ readonly CYAN='\033[0;36m'
 readonly WHITE='\033[1;37m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
-readonly SCRIPT_VERSION="0.5 ALPHA" # As per your context
+readonly SCRIPT_VERSION="3.0"
 
 LOG_FILE="/tmp/dezerx-install.log"
 LICENSE_KEY=""
@@ -166,7 +166,7 @@ print_banner() {
 ║     ${BOLD}${WHITE}██████╔╝███████╗███████╗███████╗██║  ██║██╔╝ ██╗${NC}${CYAN}         ║
 ║     ${BOLD}${WHITE}╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝${NC}${CYAN}         ║
 ║                                                              ║
-║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}        ║
+║               ${BOLD}${YELLOW}INSTALLATION & UPDATE SCRIPT v${SCRIPT_VERSION}${NC}${CYAN}  ║
 ║                  🚀 Requires Root Access 🚀                  ║
 ╚══════════════════════════════════════════════════════════════╝
 "
