@@ -1655,8 +1655,7 @@ configure_firewall() {
         execute_with_loading "systemctl enable nftables" "Enabling nftables service"
         execute_with_loading "systemctl start nftables" "Starting nftables service"
 
-        print_info "Current nftables rules:"
-        nft list ruleset
+        print_success "nftables rules added for SSH (22), HTTP (80), and HTTPS (443)."
         ;;
     *)
         print_warning "Skipped automatic nftables configuration for HTTP/HTTPS ports."
@@ -1967,43 +1966,20 @@ set_permissions() {
     local step_num
     if [[ "$OPERATION_MODE" == "install" ]]; then
         step_num="15"
-    else # update
+    else
         step_num="9"
     fi
     print_step "$step_num" "SETTING FILE PERMISSIONS"
 
-    cd "$INSTALL_DIR" || {
-        print_error "Failed to change directory to $INSTALL_DIR"
-        return 1
-    }
+    execute_with_loading "chown -R www-data:www-data $INSTALL_DIR" "Setting ownership to www-data"
+    execute_with_loading "chmod -R 755 $INSTALL_DIR" "Setting base permissions"
+    execute_with_loading "chmod -R 775 $INSTALL_DIR/storage" "Setting storage permissions"
+    execute_with_loading "chmod -R 775 $INSTALL_DIR/bootstrap/cache" "Setting cache permissions"
 
-    print_info "Setting ownership to www-data:www-data for $INSTALL_DIR..."
-    if id "www-data" &>/dev/null; then
-        execute_with_loading "chown -R www-data:www-data ." "Setting ownership (chown)" # Use . for current dir
-    else
-        print_warning "User www-data not found. Skipping chown. Manual permission adjustment might be needed."
-    fi
-
-    print_info "Setting directory permissions (typically 755 or 775 for storage/cache)..."
-    execute_with_loading "find . -type d -exec chmod 755 {} \;" "Setting directory permissions to 755"
-
-    print_info "Setting file permissions (typically 644 or 664 for storage/cache)..."
-    execute_with_loading "find . -type f -exec chmod 644 {} \;" "Setting file permissions to 644"
-
-    print_info "Setting specific writable permissions for storage and bootstrap/cache..."
-    if [[ -d "storage" ]]; then
-        execute_with_loading "chmod -R ug+rwx storage" "Setting storage permissions (u+rwx, g+rwx)"
-    fi
-    if [[ -d "bootstrap/cache" ]]; then
-        execute_with_loading "chmod -R ug+rwx bootstrap/cache" "Setting bootstrap/cache permissions (u+rwx, g+rwx)"
-    fi
-
-    # Ensure .env has secure permissions
-    if [[ -f ".env" ]]; then
-        chmod 640 .env >>"$LOG_FILE" 2>&1 # Only owner and group read, owner write
-        if id "www-data" &>/dev/null; then
-            chown "$(id -u):www-data" .env >>"$LOG_FILE" 2>&1 # Owner: current user, Group: www-data
-        fi
+    if [[ "$OPERATION_MODE" == "update" ]]; then
+        print_info "Applying additional permission fixes for update..."
+        execute_with_loading "chown -R www-data:www-data $INSTALL_DIR/*" "Setting ownership on all files"
+        execute_with_loading "chown -R www-data:www-data $INSTALL_DIR/.[^.]*" "Setting ownership on hidden files"
     fi
 
     print_success "File permissions set successfully!"
