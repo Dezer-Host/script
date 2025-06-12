@@ -1,7 +1,16 @@
+#!/bin/bash
+
+# --- EARLY SYSTEM CHECK: Redirect Debian users to the Debian script ---
+if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
+    echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
+    curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+    exit 0
+fi
+
 set -euo pipefail
 
 readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
+readonly GREEN='\033[1;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly PURPLE='\033[0;35m'
@@ -9,7 +18,7 @@ readonly CYAN='\033[0;36m'
 readonly WHITE='\033[1;37m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
-readonly SCRIPT_VERSION="2.0"
+readonly SCRIPT_VERSION="3.0"
 
 LICENSE_KEY=""
 DOMAIN=""
@@ -47,16 +56,22 @@ log_message() {
 show_loading() {
     local pid=$1
     local message=$2
-    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spin_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local frame_count=${#spin_frames[@]}
     local i=0
-    
-    printf "${BLUE}${message}${NC} "
-    while kill -0 $pid 2>/dev/null; do
-        printf "\b${spin:$i:1}"
-        i=$(( (i+1) % ${#spin} ))
-        sleep 0.1
+
+    # Hide cursor
+    tput civis 2>/dev/null || true
+
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${BLUE}%s %s${NC} " "$message" "${spin_frames[$i]}"
+        i=$(((i + 1) % frame_count))
+        sleep 0.08
     done
-    printf "\b✅\n"
+
+    # Show checkmark and restore cursor
+    printf "\r${BLUE}%s ${GREEN}✔${NC}\n" "$message"
+    tput cnorm 2>/dev/null || true
 }
 
 execute_with_loading() {
@@ -96,7 +111,7 @@ print_banner() {
 ╚══════════════════════════════════════════════════════════════╝
 "
     print_color $YELLOW "📋 This script can install or update DezerX"
-    print_color $YELLOW "⚡ Estimated time: 10-15 minutes (install) / 5-10 minutes (update)"
+    print_color $YELLOW "⚡ Estimated time: 3-6 minutes (install) / 1-3 minutes (update)"
     print_color $YELLOW "📝 Operation log: $LOG_FILE"
     echo ""
 }
@@ -104,15 +119,15 @@ print_banner() {
 print_step() {
     echo ""
     print_color $BOLD "${CYAN}┌─────────────────────────────────────────────────────────────┐"
-    local step_line="Step $1: $2"
-    local pad_length=$((57 - ${#step_line}))
+    local step_line="│ Step $1: $2"
+    local pad_length=$((62 - ${#step_line}))
     printf -v pad '%*s' "$pad_length" ''
     print_color $BOLD "${CYAN}${step_line}${pad}│"
     print_color $BOLD "${CYAN}└─────────────────────────────────────────────────────────────┘"
 }
 
 print_success() {
-    print_color $GREEN "✅ $1"
+    printf "${GREEN}✔ %s${NC}\n" "$1"
 }
 
 print_error() {
@@ -136,16 +151,46 @@ check_root() {
     print_success "Running with root privileges"
 }
 
+choose_install_variant() {
+    print_step "0" "CHOOSE INSTALLATION VARIANT"
+    print_color $CYAN "Please choose the installation variant:"
+    print_color $WHITE "1) 🆕 Normal (without a GUI)"
+    print_color $WHITE "2) 🖥️  GUI (with a graphical interface) (ALPHA)"
+    echo ""
+
+    while true; do
+        print_color $WHITE "Please choose an option (1 or 2):"
+        read -r choice
+        case $choice in
+        1)
+            print_success "Selected: Normal Installation (without GUI)"
+            return 0
+            ;;
+        2)
+            print_success "Selected: GUI Installation (ALPHA)"
+            print_warning "This variant is still in ALPHA stage and may not work as expected."
+            # Download and run the GUI script, then exit this script
+            curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_gui.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+            exit 0
+            ;;
+        *)
+            print_error "Invalid choice. Please enter 1 or 2."
+            ;;
+        esac
+    done
+}
+
 choose_operation_mode() {
     print_step "1" "CHOOSE OPERATION"
 
     print_color $CYAN "What would you like to do?"
     print_color $WHITE "1) 🆕 Fresh Installation - Install DezerX from scratch"
     print_color $WHITE "2) 🔄 Update Existing - Update an existing DezerX installation"
+    print_color $WHITE "3) ⚠️  Delete Installation - Remove DezerX and all its data ⚠️"
     echo ""
 
     while true; do
-        print_color $WHITE "Please choose an option (1 or 2):"
+        print_color $WHITE "Please choose an option (1 or 2 or 3):"
         read -r choice
         case $choice in
         1)
@@ -192,8 +237,106 @@ choose_operation_mode() {
             esac
             break
             ;;
+        3)
+            OPERATION_MODE="delete"
+            print_success "Selected: Delete Installation"
+            print_warning "This will remove DezerX and all its data permanently!"
+            print_color $WHITE "Are you sure you want to delete the installation? Type 'DELETE EVERYTHING' to confirm:"
+            read -r confirm_delete
+            if [[ "$confirm_delete" == "DELETE EVERYTHING" ]]; then
+                print_info "Proceeding with deletion..."
+                local deletion_error=0
+
+                # Ask for installation directory
+                print_color $WHITE "Enter the DezerX installation directory to delete [default: /var/www/DezerX]:"
+                read -r INSTALL_DIR_DELETE
+                if [[ -z "$INSTALL_DIR_DELETE" ]]; then
+                    INSTALL_DIR_DELETE="/var/www/DezerX"
+                fi
+
+                local env_file_path_delete="$INSTALL_DIR_DELETE/.env"
+                local DB_FULL_NAME_DELETE=""
+                local DB_USER_FULL_DELETE=""
+
+                if [[ -f "$env_file_path_delete" ]]; then
+                    DB_FULL_NAME_DELETE=$(get_env_variable "DB_DATABASE" "$env_file_path_delete")
+                    DB_USER_FULL_DELETE=$(get_env_variable "DB_USERNAME" "$env_file_path_delete")
+                else
+                    print_warning ".env file not found at $env_file_path_delete. Will ask for DB details if cleanup is desired."
+                    print_color $WHITE "Do you want to attempt to manually specify and delete database/user? (y/n)"
+                    read -r manual_db_delete
+                    if [[ "$manual_db_delete" =~ ^[Yy]$ ]]; then
+                        print_color $WHITE "Enter database name to delete (leave blank if none):"
+                        read -r DB_FULL_NAME_DELETE
+                        print_color $WHITE "Enter database user to delete (leave blank if none):"
+                        read -r DB_USER_FULL_DELETE
+                    fi
+                fi
+
+                print_info "Removing Nginx configuration..."
+                if [[ -f /etc/nginx/sites-enabled/dezerx.conf ]]; then
+                    rm -f /etc/nginx/sites-enabled/dezerx.conf >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if [[ -f /etc/nginx/sites-available/dezerx.conf ]]; then
+                    rm -f /etc/nginx/sites-available/dezerx.conf >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                systemctl reload nginx >>"$LOG_FILE" 2>&1 || deletion_error=1
+                print_success "Nginx configuration removed."
+
+                print_info "Removing installation directory..."
+                if [[ -d "$INSTALL_DIR_DELETE" ]]; then
+                    rm -rf "$INSTALL_DIR_DELETE" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                    print_success "Installation directory removed: $INSTALL_DIR_DELETE"
+                else
+                    print_warning "Directory $INSTALL_DIR_DELETE does not exist. Skipping directory removal."
+                fi
+
+                if command -v mariadb &>/dev/null; then
+                    if [[ -n "$DB_FULL_NAME_DELETE" ]]; then
+                        print_info "Removing database '$DB_FULL_NAME_DELETE'..."
+                        mariadb -e "DROP DATABASE IF EXISTS \`$DB_FULL_NAME_DELETE\`;" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        print_success "Database '$DB_FULL_NAME_DELETE' removed (if it existed)."
+                    fi
+                    if [[ -n "$DB_USER_FULL_DELETE" ]]; then
+                        print_info "Removing database user '$DB_USER_FULL_DELETE'..."
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL_DELETE'@'127.0.0.1';" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        mariadb -e "DROP USER IF EXISTS '$DB_USER_FULL_DELETE'@'localhost';" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                        print_success "Database user '$DB_USER_FULL_DELETE' removed (if it existed)."
+                    fi
+                    if [[ -n "$DB_FULL_NAME_DELETE" || -n "$DB_USER_FULL_DELETE" ]]; then
+                        mariadb -e "FLUSH PRIVILEGES;" >>"$LOG_FILE" 2>&1 || deletion_error=1
+                    fi
+                else
+                    print_warning "mariadb command not found. Skipping database and user removal."
+                fi
+
+                print_info "Removing queue worker service..."
+                if systemctl is-active --quiet dezerx.service; then
+                    systemctl stop dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if systemctl is-enabled --quiet dezerx.service; then
+                    systemctl disable dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                if [[ -f /etc/systemd/system/dezerx.service ]]; then
+                    rm -f /etc/systemd/system/dezerx.service >>"$LOG_FILE" 2>&1 || deletion_error=1
+                fi
+                systemctl daemon-reload >>"$LOG_FILE" 2>&1 || deletion_error=1
+                print_success "Queue worker service removed."
+
+                if [[ "$deletion_error" -ne 0 ]]; then
+                    print_error "Some errors occurred during deletion. Please check the log: $LOG_FILE"
+                else
+                    print_success "DezerX and all related data have been deleted."
+                fi
+                exit 0
+            else
+                print_info "Deletion cancelled by user"
+                exit 0
+            fi
+            break # Should not be reached if deletion proceeds or is cancelled
+            ;;
         *)
-            print_error "Invalid choice. Please enter 1 or 2."
+            print_error "Invalid choice. Please enter 1 or 2 or 3."
             ;;
         esac
     done
@@ -331,6 +474,46 @@ get_install_input() {
         fi
     done
 
+    while true; do
+        print_color $CYAN "🗄️  DATABASE CONFIGURATION:"
+        print_color $WHITE "Leave blank to use defaults."
+
+        if [[ -z "$DB_NAME_PREFIX" ]]; then
+            DB_NAME_PREFIX=$(echo "$DOMAIN" | grep -o '^[a-zA-Z]*' | tr '[:upper:]' '[:lower:]' | cut -c1-4)
+            if [[ -z "$DB_NAME_PREFIX" ]]; then
+                DB_NAME_PREFIX="dzrx"
+            fi
+        fi
+
+        print_color $WHITE "Database name [default: ${DB_NAME_PREFIX}_dezerx]:"
+        read -r user_db_name
+        if [[ -n "$user_db_name" ]]; then
+            DB_FULL_NAME="$user_db_name"
+        else
+            DB_FULL_NAME="${DB_NAME_PREFIX}_dezerx"
+        fi
+
+        print_color $WHITE "Database user [default: ${DB_NAME_PREFIX}_dezer]:"
+        read -r user_db_user
+        if [[ -n "$user_db_user" ]]; then
+            DB_USER_FULL="$user_db_user"
+        else
+            DB_USER_FULL="${DB_NAME_PREFIX}_dezer"
+        fi
+
+        print_color $WHITE "Database password [leave blank to auto-generate]:"
+        read -r -s user_db_pass
+        echo
+        if [[ -n "$user_db_pass" ]]; then
+            DB_PASSWORD="$user_db_pass"
+        else
+            if [[ -z "$DB_PASSWORD" ]]; then
+                DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+            fi
+        fi
+        break
+    done
+
     echo ""
     print_color $CYAN "📋 INSTALLATION SUMMARY:"
     print_info "License Key: ${LICENSE_KEY:0:8}***"
@@ -428,6 +611,14 @@ get_update_input() {
             print_error "No artisan file found in $INSTALL_DIR. This doesn't appear to be a Laravel/DezerX installation."
             continue
         fi
+
+        # --- NEU: DB-Infos aus .env lesen ---
+        DB_FULL_NAME=$(get_env_variable "DB_DATABASE" "$INSTALL_DIR/.env")
+        DB_USER_FULL=$(get_env_variable "DB_USERNAME" "$INSTALL_DIR/.env")
+        DB_PASSWORD=$(get_env_variable "DB_PASSWORD" "$INSTALL_DIR/.env")
+        # Fallback, falls leer:
+        if [[ -z "$DB_FULL_NAME" ]]; then DB_FULL_NAME="dezerx"; fi
+        if [[ -z "$DB_USER_FULL" ]]; then DB_USER_FULL="dezer"; fi
 
         break
     done
@@ -536,7 +727,7 @@ backup_database() {
 
     if [[ ! -f "$env_file" ]]; then
         print_warning ".env file not found at $env_file. Skipping database backup."
-        return 0
+        return 0 # This should return, not exit
     fi
 
     local db_connection=$(get_env_variable "DB_CONNECTION" "$env_file")
@@ -548,16 +739,20 @@ backup_database() {
 
     if [[ "$db_connection" != "mysql" ]]; then
         print_warning "Database connection is not 'mysql' in .env. Skipping database backup."
-        return 0
+        return 0 # This should return, not exit
     fi
 
     if [[ -z "$db_host" || -z "$db_database" || -z "$db_username" ]]; then
         print_error "Missing database credentials in .env file. Cannot perform database backup."
+        exit 1 # Only exit on critical errors
+    fi
+
+    # Use existing BACKUP_DIR from create_backup()
+    if [[ -z "$BACKUP_DIR" ]]; then
+        print_error "BACKUP_DIR not set. create_backup() should run first."
         exit 1
     fi
 
-    BACKUP_DIR="/tmp/dezerx-backup-$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
     DB_BACKUP_FILE="$BACKUP_DIR/database_$(date +%Y%m%d-%H%M%S).sql.gz"
 
     print_info "Backing up database '$db_database'..."
@@ -577,13 +772,12 @@ backup_database() {
         exit 1
     fi
 
-    execute_with_loading "$mysqldump_cmd" "Executing database backup"
+    execute_with_loading "$mysqldump_cmd" "Creating database backup"
     local exit_code=$?
     unset MYSQL_PWD
 
     if [ $exit_code -ne 0 ]; then
         print_error "Database backup failed!"
-
         return 1
     fi
 
@@ -593,6 +787,10 @@ backup_database() {
     fi
 
     print_success "Database backup completed successfully!"
+    print_info "Database backup saved to: $DB_BACKUP_FILE"
+
+    # Add explicit continuation message
+    print_info "Continuing with update process..."
     return 0
 }
 
@@ -633,7 +831,7 @@ install_dependencies() {
     fi
 
     print_info "Adding Redis repository..."
-    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor > /usr/share/keyrings/redis-archive-keyring.gpg 2>/dev/null
+    curl -fsSL https://packages.redis.io/gpg | gpg --dearmor >/usr/share/keyrings/redis-archive-keyring.gpg 2>/dev/null
     echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" >/etc/apt/sources.list.d/redis.list
 
     print_info "Adding MariaDB repository..."
@@ -641,7 +839,7 @@ install_dependencies() {
 
     execute_with_loading "apt-get update" "Updating package lists with new repositories"
 
-    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server"
+    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server ufw"
 
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y $packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
 
@@ -649,6 +847,7 @@ install_dependencies() {
     execute_with_loading "systemctl start php8.3-fpm && systemctl enable php8.3-fpm" "Starting and enabling PHP-FPM"
     execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis"
     execute_with_loading "systemctl start cron && systemctl enable cron" "Starting and enabling Cron service"
+    execute_with_loading "systemctl stop ufw && systemctl disable ufw" "Stoping and disabling UFW due to later configuration"
 
     execute_with_loading "mkdir -p /var/www" "Creating /var/www directory"
 
@@ -673,29 +872,6 @@ install_composer() {
     print_success "Composer installed successfully!"
 }
 
-generate_random_prefix() {
-
-    if command -v openssl >/dev/null 2>&1; then
-        DB_NAME_PREFIX=$(openssl rand -hex 20 | tr -dc 'a-z' | head -c 4)
-    elif command -v shuf >/dev/null 2>&1; then
-        DB_NAME_PREFIX=$(echo {a..z} | tr ' ' '\n' | shuf | head -c 4)
-    else
-
-        DB_NAME_PREFIX=$(echo "${RANDOM}$(date +%N)" | sha256sum | tr -dc 'a-z' | head -c 4)
-    fi
-
-    if [[ -z "$DB_NAME_PREFIX" || ${#DB_NAME_PREFIX} -ne 4 ]]; then
-        DB_NAME_PREFIX="dzer"
-    fi
-
-    DB_FULL_NAME="${DB_NAME_PREFIX}_dezerx"
-    DB_USER_FULL="${DB_NAME_PREFIX}_dezer"
-
-    print_info "Generated database prefix: $DB_NAME_PREFIX"
-    print_info "Database name: $DB_FULL_NAME"
-    print_info "Database user: $DB_USER_FULL"
-}
-
 setup_database() {
     print_step "7" "SETTING UP DATABASE"
 
@@ -706,16 +882,19 @@ setup_database() {
     print_info "Securing MariaDB installation and creating database/user..."
 
     local sql_file=$(mktemp)
-    cat >"$sql_file" <<'EOF'
--- Remove anonymous users
-DROP USER IF EXISTS ''@'%';
-DROP USER IF EXISTS ''@'localhost';
+    cat >"$sql_file" <<EOF
+-- Create the dedicated database for the application
+CREATE DATABASE IF NOT EXISTS \`$DB_FULL_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Remove test database and privileges
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test_%';
+-- Create the dedicated user for the application (both hosts!)
+CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
+CREATE USER IF NOT EXISTS '$DB_USER_FULL'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
 
--- Apply changes
+-- Grant all privileges on the application database to the user (both hosts!)
+GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON \`$DB_FULL_NAME\`.* TO '$DB_USER_FULL'@'localhost' WITH GRANT OPTION;
+
+-- Apply all privilege changes
 FLUSH PRIVILEGES;
 EOF
 
@@ -1082,7 +1261,6 @@ configure_laravel() {
     cd "$INSTALL_DIR"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-
         if [[ ! -f ".env.example" ]]; then
             print_error ".env.example file not found in $INSTALL_DIR"
             print_info "Directory contents:"
@@ -1092,23 +1270,23 @@ configure_laravel() {
 
         execute_with_loading "cp .env.example .env" "Copying environment configuration"
     else
-
         if [[ ! -f ".env" ]]; then
             print_error ".env file not found in $INSTALL_DIR"
             restore_backup
             exit 1
         fi
         print_info "Using existing .env configuration"
+
+        # Move sync_env_files to BEFORE composer install
+        print_step "7.1" "SYNCHRONIZING .ENV FILE"
+        sync_env_files "$INSTALL_DIR"
     fi
 
     print_info "Installing Composer dependencies..."
     if [[ "$OPERATION_MODE" == "install" ]]; then
         echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
     else
-
-        print_step "7.1" "SYNCHRONIZING .ENV FILE"
-        sync_env_files "$INSTALL_DIR"
-
+        # Remove the duplicate sync_env_files call that was here
         echo "yes" | composer install --no-dev --optimize-autoloader >>"$LOG_FILE" 2>&1 &
     fi
 
@@ -1126,6 +1304,10 @@ configure_laravel() {
         exit $composer_exit_code
     fi
 
+    # Add explicit success message and continuation
+    print_success "Composer dependencies installed successfully!"
+    print_info "Continuing with Laravel configuration..."
+
     execute_with_loading "php artisan storage:link" "Linking storage directory"
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
@@ -1141,18 +1323,16 @@ configure_laravel() {
         update_env_file "DB_PASSWORD" "$DB_PASSWORD" ".env"
 
         update_env_file "APP_URL" "${PROTOCOL}://$DOMAIN" ".env"
-
         update_env_file "KEY" "$LICENSE_KEY" ".env"
 
         print_success "Laravel configuration completed!"
-        print_info "✅ Database configuration updated"
-        print_info "✅ APP_URL set to: ${PROTOCOL}://$DOMAIN"
-        print_info "✅ License key configured in KEY field"
+        print_success "Database configuration updated"
+        print_success "APP_URL set to: ${PROTOCOL}://$DOMAIN"
+        print_success "License key configured in KEY field"
     else
-
         update_env_file "KEY" "$LICENSE_KEY" ".env"
         print_success "Laravel configuration updated!"
-        print_info "✅ License key updated in KEY field"
+        print_success "License key updated in KEY field"
     fi
 
     print_info "Verifying .env configuration..."
@@ -1163,42 +1343,118 @@ configure_laravel() {
     else
         print_warning "Could not verify all keys in .env file"
     fi
+
+    # Add explicit completion message
+    print_success "Laravel configuration phase completed successfully!"
 }
 
 check_dns() {
-    print_step "10" "DNS VERIFICATION"
+    print_step "10" "DNS VERIFICATION" # Step number consistent for install
 
     local server_ip
-    server_ip=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 ipinfo.io/ip || echo "Unable to detect")
+    # Try multiple methods to get public IP
+    server_ip=$(curl -s --connect-timeout 5 https://ifconfig.me || curl -s --connect-timeout 5 https://api.ipify.org || curl -s --connect-timeout 5 https://ipinfo.io/ip || echo "Unable to detect server IP automatically")
 
-    print_info "Server IP Address: $server_ip"
+    if [[ "$server_ip" == "Unable to detect server IP automatically" ]]; then
+        print_warning "Could not automatically detect the server's public IP address."
+        print_color $WHITE "Please manually enter this server's public IP address:"
+        read -r server_ip
+        if [[ -z "$server_ip" ]]; then
+            print_error "No IP address entered. DNS check cannot proceed effectively."
+            # Optionally, allow to skip or exit
+            return 1 # Indicate failure or inability to check
+        fi
+    fi
+
+    print_info "This Server's Public IP Address: $server_ip"
     print_info "Domain to configure: $DOMAIN"
+    print_info "Attempting to resolve $DOMAIN..."
+
+    local resolved_ip
+    # Use `getent hosts` or `dig` if available, fallback to `nslookup`
+    if command -v dig &>/dev/null; then
+        resolved_ip=$(dig +short "$DOMAIN" A | tail -n1)
+    elif command -v getent &>/dev/null; then
+        resolved_ip=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -n1)
+    elif command -v nslookup &>/dev/null; then
+        resolved_ip=$(nslookup "$DOMAIN" | awk '/^Address: / { print $2 }' | tail -n1)
+    else
+        print_warning "DNS lookup tools (dig, getent, nslookup) not found. Cannot automatically verify DNS."
+        resolved_ip="unknown"
+    fi
+
+    if [[ "$resolved_ip" == "$server_ip" ]]; then
+        print_success "DNS check successful! $DOMAIN resolves to $server_ip."
+        return 0
+    elif [[ "$resolved_ip" == "unknown" ]]; then
+        print_warning "Could not automatically verify DNS."
+    else
+        print_warning "$DOMAIN currently resolves to $resolved_ip, which does not match this server's IP $server_ip."
+    fi
 
     while true; do
-        print_color $WHITE "🌐 Have you pointed $DOMAIN to this server's IP ($server_ip)? (y/n):"
+        print_color $WHITE "🌐 Have you pointed an A record for '$DOMAIN' to this server's IP ($server_ip)? (y/n):"
         read -r dns_response
         case $dns_response in
         [Yy] | [Yy][Ee][Ss] | [Yy][Ee])
-            print_success "DNS configuration confirmed!"
+            print_success "DNS configuration acknowledged by user."
             break
             ;;
         [Nn] | [Nn][Oo])
             print_warning "Please configure your DNS settings:"
-            print_info "1. Log into your domain registrar or DNS provider"
-            print_info "2. Create an A record pointing $DOMAIN to $server_ip"
-            print_info "3. Wait for DNS propagation (usually 5-30 minutes)"
-            print_color $WHITE "Press Enter when DNS is configured..."
+            print_info "1. Log into your domain registrar or DNS provider."
+            print_info "2. Create or update an A record for '$DOMAIN' to point to '$server_ip'."
+            print_info "3. Wait for DNS propagation (can take from minutes to hours)."
+            print_color $WHITE "Press Enter to acknowledge and continue, or Ctrl+C to abort and fix DNS first."
             read -r
+            break # Continue after user acknowledgement
             ;;
         *)
-            print_error "Please answer with y/yes or n/no"
+            print_error "Please answer with y/yes or n/no."
             ;;
         esac
     done
+    return 0
+}
+
+prompt_ufw_firewall() {
+    print_step "11" "FIREWALL CONFIGURATION"
+
+    if ! command -v ufw &>/dev/null; then
+        print_warning "ufw (Uncomplicated Firewall) is not installed. Skipping firewall configuration."
+        return
+    fi
+
+    print_color $WHITE "Would you like to automatically configure the firewall (ufw) to allow HTTP/HTTPS traffic? (y/n):"
+    read -r ufw_choice
+    case "$ufw_choice" in
+    [Yy] | [Yy][Ee][Ss])
+        print_info "Configuring UFW to allow ports 80 (HTTP) and 443 (HTTPS)..."
+        execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
+        ufw allow 80/tcp >>"$LOG_FILE" 2>&1
+        ufw allow 443/tcp >>"$LOG_FILE" 2>&1
+        ufw reload >>"$LOG_FILE" 2>&1
+        print_success "UFW configured to allow HTTP/HTTPS traffic."
+        ;;
+    *)
+        print_warning "Skipped UFW firewall configuration. Make sure ports 80 and 443 are open."
+        print_color $WHITE "Do you want ufw to be started and enabled? (y/n):"
+        read -r ufw_start_choice
+        case "$ufw_start_choice" in
+        [Yy] | [Yy][Ee][Ss])
+            execute_with_loading "systemctl start ufw && systemctl enable ufw" "Starting & enabling UFW"
+            print_success "UFW started and enabled, but no ports were opened."
+            ;;
+        *)
+            print_info "UFW will not be started or enabled."
+            ;;
+        esac
+        ;;
+    esac
 }
 
 setup_ssl() {
-    print_step "11" "SETTING UP SSL CERTIFICATE"
+    print_step "12" "SETTING UP SSL CERTIFICATE"
 
     execute_with_loading "apt-get install -y certbot python3-certbot-nginx" "Installing Certbot"
 
@@ -1236,13 +1492,13 @@ EOF
 }
 
 setup_ssl_skip() {
-    print_step "11" "SETTING UP SSL CERTIFICATE"
+    print_step "12" "SETTING UP SSL CERTIFICATE"
 
     print_warning "You selected HTTP. Skipping SSL certificate setup."
 }
 
 configure_nginx() {
-    print_step "12" "CONFIGURING NGINX"
+    print_step "13" "CONFIGURING NGINX"
 
     print_info "Removing default Nginx configuration..."
     rm -f /etc/nginx/sites-available/default
@@ -1381,7 +1637,7 @@ EOF
 
 install_nodejs_and_build() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "13" "INSTALLING NODE.JS AND BUILDING ASSETS"
+        print_step "14" "INSTALLING NODE.JS AND BUILDING ASSETS"
     else
         print_step "8" "BUILDING ASSETS"
     fi
@@ -1405,7 +1661,7 @@ install_nodejs_and_build() {
 
 set_permissions() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "14" "SETTING FILE PERMISSIONS"
+        print_step "15" "SETTING FILE PERMISSIONS"
     else
         print_step "9" "SETTING FILE PERMISSIONS"
     fi
@@ -1426,7 +1682,7 @@ set_permissions() {
 
 run_migrations() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "15" "RUNNING DATABASE MIGRATIONS"
+        print_step "16" "RUNNING DATABASE MIGRATIONS"
     else
         print_step "10" "RUNNING DATABASE MIGRATIONS"
     fi
@@ -1486,7 +1742,7 @@ run_migrations() {
 }
 
 setup_cron() {
-    print_step "16" "SETTING UP CRON JOBS"
+    print_step "17" "SETTING UP CRON JOBS"
 
     print_info "Adding Laravel scheduler to crontab..."
 
@@ -1496,14 +1752,11 @@ setup_cron() {
         print_info "Found existing crontab for www-data user"
     else
         print_info "No existing crontab for www-data user, creating new one"
-
         >"$temp_cron_file"
     fi
 
     if ! grep -q "artisan schedule:run" "$temp_cron_file"; then
-
         echo "* * * * * cd $INSTALL_DIR && php artisan schedule:run >> /dev/null 2>&1" >>"$temp_cron_file"
-
         if crontab -u www-data "$temp_cron_file"; then
             print_success "Laravel scheduler added to crontab successfully!"
         else
@@ -1516,6 +1769,19 @@ setup_cron() {
     fi
 
     rm -f "$temp_cron_file"
+
+    # Add certbot renewal cronjob only if https is selected and certbot is installed
+    if [[ "$PROTOCOL" == "https" ]] && command -v certbot &>/dev/null; then
+        if ! crontab -l 2>/dev/null | grep -q 'certbot renew --quiet --deploy-hook "systemctl restart nginx"'; then
+            (
+                crontab -l 2>/dev/null
+                echo '0 23 * * * certbot renew --quiet --deploy-hook "systemctl restart nginx"'
+            ) | crontab -
+            print_success "Added SSL renewal cronjob for certbot."
+        else
+            print_info "SSL renewal cronjob for certbot already exists."
+        fi
+    fi
 
     if systemctl is-active --quiet cron; then
         print_success "Cron service is running"
@@ -1533,7 +1799,7 @@ setup_cron() {
 }
 
 setup_queue_worker() {
-    print_step "17" "SETTING UP QUEUE WORKER SERVICE"
+    print_step "18" "SETTING UP QUEUE WORKER SERVICE"
 
     print_info "Creating systemd service for queue worker..."
     cat >/etc/systemd/system/dezerx.service <<EOF
@@ -1581,15 +1847,13 @@ cleanup_backup() {
 
 print_summary() {
     if [[ "$OPERATION_MODE" == "install" ]]; then
-        print_step "18" "INSTALLATION COMPLETE"
+        print_step "19" "INSTALLATION COMPLETE"
 
-        print_color $GREEN "
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║                    🎉 INSTALLATION SUCCESSFUL! 🎉           ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-"
+        print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "║                 🎉 INSTALLATION SUCCESSFUL! 🎉              ║"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
 
         print_success "DezerX has been successfully installed!"
 
@@ -1610,13 +1874,11 @@ print_summary() {
     else
         print_step "11" "UPDATE COMPLETE"
 
-        print_color $GREEN "
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║                      🎉 UPDATE SUCCESSFUL! 🎉               ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-"
+        print_color $GREEN "╔══════════════════════════════════════════════════════════════╗"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "║                      🎉 UPDATE SUCCESSFUL! 🎉               ║"
+        print_color $GREEN "║                                                              ║"
+        print_color $GREEN "╚══════════════════════════════════════════════════════════════╝"
 
         print_success "DezerX has been successfully updated!"
 
@@ -1624,6 +1886,8 @@ print_summary() {
         print_color $CYAN "📊 UPDATE DETAILS:"
         print_info "🌐 URL: ${BOLD}${PROTOCOL}://$DOMAIN${NC}"
         print_info "📁 Directory: ${BOLD}$INSTALL_DIR${NC}"
+        print_info "🗄️  Database: ${BOLD}$DB_FULL_NAME${NC}"
+        print_info "👤 DB User: ${BOLD}$DB_USER_FULL${NC}"
         print_info "🔑 License Key: ${BOLD}${LICENSE_KEY:0:8}***${NC}"
 
         echo ""
@@ -1701,6 +1965,15 @@ EOF
     print_info "💾 Operation details saved to: $INSTALL_DIR/$(if [[ "$OPERATION_MODE" == "install" ]]; then echo "INSTALLATION_INFO.txt"; else echo "UPDATE_INFO.txt"; fi)"
 }
 
+show_contributors() {
+    print_color $CYAN "=============================================================="
+    print_color $CYAN "        DezerX Install / Update Script"
+    print_color $CYAN "  Main script development and major contributions by:"
+    print_color $YELLOW "  👑 Anthony S and 👑 KingIronMan2011"
+    print_color $CYAN "=============================================================="
+    echo ""
+}
+
 cleanup_on_error() {
     print_error "Operation failed at line $1"
     print_info "Check the operation log: $LOG_FILE"
@@ -1717,29 +1990,27 @@ cleanup_on_error() {
 }
 
 main() {
-
     echo "DezerX $(if [[ "$OPERATION_MODE" == "install" ]]; then echo "Installation"; else echo "Update"; fi) Log - $(date)" >"$LOG_FILE"
 
     print_banner
-
     trap 'cleanup_on_error $LINENO' ERR
 
     check_required_commands
     check_root
+    choose_install_variant
     choose_operation_mode
     check_system_requirements
 
     if [[ "$OPERATION_MODE" == "install" ]]; then
-
         get_install_input
         verify_license
         install_dependencies
         install_composer
-        generate_random_prefix
         setup_database
         download_dezerx
         configure_laravel
         check_dns
+        prompt_ufw_firewall
         if [[ "$PROTOCOL" == "https" ]]; then
             setup_ssl
         else
@@ -1752,21 +2023,24 @@ main() {
         setup_cron
         setup_queue_worker
     else
-
-        get_update_input
-        verify_license
-        create_backup
-        backup_database
-        download_dezerx
-        configure_laravel
-        install_nodejs_and_build
-        set_permissions
-        run_migrations
-        cleanup_backup
+        if [[ "$OPERATION_MODE" == "update" ]]; then
+            # UPDATE MODE
+            get_update_input
+            verify_license
+            create_backup
+            backup_database # <--- ADD THIS LINE
+            download_dezerx
+            configure_laravel
+            print_info "DEBUG: configure_laravel completed, continuing..."
+            install_nodejs_and_build
+            set_permissions
+            run_migrations
+            cleanup_backup
+        fi
     fi
 
     print_summary
-
+    show_contributors
     log_message "Operation completed successfully"
 }
 
