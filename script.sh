@@ -1,10 +1,24 @@
 #!/bin/bash
 
 # --- EARLY SYSTEM CHECK: Redirect Debian users to the Debian script ---
-if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
-    echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
-    curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
-    exit 0
+if ! command -v lsb_release &>/dev/null; then
+    apt-get update -qq && apt-get install -y lsb-release >/dev/null 2>&1
+fi
+
+if command -v lsb_release &>/dev/null; then
+    distro_name=$(lsb_release -si)
+    if [[ "$distro_name" == "Debian" ]]; then
+        echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
+        curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+        exit 0
+    fi
+else
+    # Fallback if lsb_release still isn't available
+    if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
+        echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
+        curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+        exit 0
+    fi
 fi
 
 set -euo pipefail
@@ -361,14 +375,20 @@ check_system_requirements() {
         execute_with_loading "apt-get install -y lsb-release" "Installing lsb-release"
     fi
 
-    local os_name=$(lsb_release -si)
-    local os_version=$(lsb_release -sr)
+    os_name=$(lsb_release -si)
+    os_version=$(lsb_release -sr)
 
     print_info "Operating System: $os_name $os_version"
 
-    if [[ "$os_name" != "Ubuntu" ]] && [[ "$os_name" != "Debian" ]]; then
-        print_error "This script only supports Ubuntu and Debian"
-        exit 1
+    if [[ "$os_name" == "Ubuntu" ]]; then
+        # Compare major and minor version (e.g., 20.04 < 22.04)
+        os_major=$(echo "$os_version" | cut -d. -f1)
+        os_minor=$(echo "$os_version" | cut -d. -f2)
+        if (( os_major < 22 )) || { (( os_major == 22 )) && (( os_minor < 4 )); }; then
+            print_error "Ubuntu $os_version is not supported. Please upgrade to Ubuntu 22.04 or newer."
+            print_info "DezerX requires at least Ubuntu 22.04 for PHP 8.3 and other dependencies."
+            exit 1
+        fi
     fi
 
     local available_space=$(df / | awk 'NR==2 {print $4}')
@@ -824,6 +844,8 @@ install_dependencies() {
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y" "Upgrading system packages"
 
     execute_with_loading "apt-get install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release wget unzip git cron" "Installing basic dependencies"
+      
+    local php_version="8.3"
 
     print_info "Adding PHP repository..."
     if ! LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>"$LOG_FILE" 2>&1; then
@@ -839,12 +861,12 @@ install_dependencies() {
 
     execute_with_loading "apt-get update" "Updating package lists with new repositories"
 
-    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server ufw"
+    local packages="nginx php${php_version} php${php_version}-common php${php_version}-cli php${php_version}-gd php${php_version}-mysql php${php_version}-mbstring php${php_version}-bcmath php${php_version}-xml php${php_version}-fpm php${php_version}-curl php${php_version}-zip mariadb-server tar unzip git redis-server ufw"
 
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y $packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
 
     execute_with_loading "systemctl start nginx && systemctl enable nginx" "Starting and enabling Nginx"
-    execute_with_loading "systemctl start php8.3-fpm && systemctl enable php8.3-fpm" "Starting and enabling PHP-FPM"
+    execute_with_loading "systemctl start php${php_version}-fpm && systemctl enable php${php_version}-fpm" "Starting and enabling PHP-FPM"
     execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis"
     execute_with_loading "systemctl start cron && systemctl enable cron" "Starting and enabling Cron service"
     execute_with_loading "systemctl stop ufw && systemctl disable ufw" "Stoping and disabling UFW due to later configuration"
@@ -1456,45 +1478,41 @@ prompt_ufw_firewall() {
 setup_ssl() {
     print_step "12" "SETTING UP SSL CERTIFICATE"
 
-    execute_with_loading "apt-get install -y certbot python3-certbot-nginx" "Installing Certbot"
+    execute_with_loading "apt-get install -y certbot" "Installing Certbot"
+    execute_with_loading "systemctl stop nginx" "Stopping Nginx to obtain SSL certificate"
 
     print_info "Obtaining SSL certificate for $DOMAIN..."
 
-    cat >/etc/nginx/sites-available/temp-dezerx <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-    root /var/www/html;
-    index index.html;
-    
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-}
-EOF
-
-    ln -sf /etc/nginx/sites-available/temp-dezerx /etc/nginx/sites-enabled/temp-dezerx
-    systemctl reload nginx
-
-    if ! certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "admin@$DOMAIN" --no-eff-email; then
-        print_error "Failed to obtain SSL certificate"
+    if ! certbot certonly --standalone -d "$DOMAIN" --non-interactive --agree-tos --email "admin@$DOMAIN" --no-eff-email >>"$LOG_FILE" 2>&1; then
+        print_error "Failed to obtain SSL certificate using HTTP challenge."
         print_info "Please ensure:"
         print_info "1. Domain $DOMAIN points to this server"
         print_info "2. Port 80 and 443 are open"
         print_info "3. No firewall is blocking the connection"
-        exit 1
+        
+        print_color $WHITE "Would you like to try the advanced DNS challenge instead? (y/n):"
+        read -r dns_choice
+        if [[ "$dns_choice" =~ ^[Yy] ]]; then
+            print_info "You will need to create a DNS TXT record for domain validation."
+            print_info "Certbot will now prompt you with the required DNS record."
+            # DO NOT redirect output for DNS challenge so user can see/copy the TXT record
+            if ! certbot certonly --manual --preferred-challenges dns -d "$DOMAIN" --agree-tos --no-eff-email --email "admin@$DOMAIN"; then
+                print_error "DNS challenge also failed. Please check the log: $LOG_FILE"
+                execute_with_loading "systemctl start nginx" "Restarting Nginx"
+                exit 1
+            else
+                print_success "SSL certificate obtained successfully via DNS challenge!"
+            fi
+        else
+            print_error "SSL certificate setup failed. Please check the log: $LOG_FILE"
+            execute_with_loading "systemctl start nginx" "Restarting Nginx"
+            exit 1
+        fi
+    else
+        print_success "SSL certificate obtained successfully!"
     fi
 
-    rm -f /etc/nginx/sites-enabled/temp-dezerx
-    rm -f /etc/nginx/sites-available/temp-dezerx
-
-    print_success "SSL certificate obtained successfully!"
-}
-
-setup_ssl_skip() {
-    print_step "12" "SETTING UP SSL CERTIFICATE"
-
-    print_warning "You selected HTTP. Skipping SSL certificate setup."
+    execute_with_loading "systemctl start nginx" "Restarting Nginx after obtaining SSL certificate"
 }
 
 configure_nginx() {
@@ -1550,7 +1568,7 @@ server {
 
     location ~ \.php$ {
         fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_pass unix:/run/php/php${php_version}-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
@@ -1601,7 +1619,7 @@ server {
 
     location ~ \.php$ {
         fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_pass unix:/run/php/php${php_version}-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
