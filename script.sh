@@ -380,9 +380,15 @@ check_system_requirements() {
 
     print_info "Operating System: $os_name $os_version"
 
-    if [[ "$os_name" != "Ubuntu" ]] && [[ "$os_name" != "Debian" ]]; then
-        print_error "This script only supports Ubuntu and Debian"
-        exit 1
+    if [[ "$os_name" == "Ubuntu" ]]; then
+        # Compare major and minor version (e.g., 20.04 < 22.04)
+        os_major=$(echo "$os_version" | cut -d. -f1)
+        os_minor=$(echo "$os_version" | cut -d. -f2)
+        if (( os_major < 22 )) || { (( os_major == 22 )) && (( os_minor < 4 )); }; then
+            print_error "Ubuntu $os_version is not supported. Please upgrade to Ubuntu 22.04 or newer."
+            print_info "DezerX requires at least Ubuntu 22.04 for PHP 8.3 and other dependencies."
+            exit 1
+        fi
     fi
 
     local available_space=$(df / | awk 'NR==2 {print $4}')
@@ -838,16 +844,8 @@ install_dependencies() {
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y" "Upgrading system packages"
 
     execute_with_loading "apt-get install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release wget unzip git cron" "Installing basic dependencies"
-
-    if [[ "$os_name" == "Ubuntu" ]]; then
-        if [[ "$os_version" == "20.04" ]]; then
-            php_version="8.2"
-        else
-            php_version="8.3"
-        fi
-    else
-        php_version="8.3"
-    fi
+      
+    local php_version="8.3"
 
     print_info "Adding PHP repository..."
     if ! LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>"$LOG_FILE" 2>&1; then
