@@ -1496,7 +1496,7 @@ setup_ssl() {
             print_info "You will need to create a DNS TXT record for domain validation."
             print_info "Certbot will now prompt you with the required DNS record."
             # DO NOT redirect output for DNS challenge so user can see/copy the TXT record
-            if ! certbot certonly --manual --preferred-challenges dns -d "$DOMAIN" --agree-tos --no-eff-email --email "admin@$DOMAIN" --manual-public-ip-logging-ok; then
+            if ! certbot certonly --manual --preferred-challenges dns -d "$DOMAIN" --agree-tos --no-eff-email --email "admin@$DOMAIN"; then
                 print_error "DNS challenge also failed. Please check the log: $LOG_FILE"
                 execute_with_loading "systemctl start nginx" "Restarting Nginx"
                 exit 1
