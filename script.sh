@@ -1,10 +1,24 @@
 #!/bin/bash
 
 # --- EARLY SYSTEM CHECK: Redirect Debian users to the Debian script ---
-if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
-    echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
-    curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
-    exit 0
+if ! command -v lsb_release &>/dev/null; then
+    apt-get update -qq && apt-get install -y lsb-release >/dev/null 2>&1
+fi
+
+if command -v lsb_release &>/dev/null; then
+    distro_name=$(lsb_release -si)
+    if [[ "$distro_name" == "Debian" ]]; then
+        echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
+        curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+        exit 0
+    fi
+else
+    # Fallback if lsb_release still isn't available
+    if [ -f /etc/debian_version ] && ! grep -qi ubuntu /etc/os-release; then
+        echo "Detected Debian system. Redirecting to the DezerX Debian installer..."
+        curl -fsSL https://raw.githubusercontent.com/Dezer-Host/script/main/script_debian.sh -o /tmp/dx.sh && bash /tmp/dx.sh
+        exit 0
+    fi
 fi
 
 set -euo pipefail
@@ -361,8 +375,8 @@ check_system_requirements() {
         execute_with_loading "apt-get install -y lsb-release" "Installing lsb-release"
     fi
 
-    local os_name=$(lsb_release -si)
-    local os_version=$(lsb_release -sr)
+    os_name=$(lsb_release -si)
+    os_version=$(lsb_release -sr)
 
     print_info "Operating System: $os_name $os_version"
 
@@ -825,6 +839,16 @@ install_dependencies() {
 
     execute_with_loading "apt-get install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release wget unzip git cron" "Installing basic dependencies"
 
+    if [[ "$os_name" == "Ubuntu" ]]; then
+        if [[ "$os_version" == "20.04" ]]; then
+            php_version="8.2"
+        else
+            php_version="8.3"
+        fi
+    else
+        php_version="8.3"
+    fi
+
     print_info "Adding PHP repository..."
     if ! LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>"$LOG_FILE" 2>&1; then
         print_warning "Failed to add PHP PPA, trying alternative method..."
@@ -839,12 +863,12 @@ install_dependencies() {
 
     execute_with_loading "apt-get update" "Updating package lists with new repositories"
 
-    local packages="nginx php8.3 php8.3-common php8.3-cli php8.3-gd php8.3-mysql php8.3-mbstring php8.3-bcmath php8.3-xml php8.3-fpm php8.3-curl php8.3-zip mariadb-server tar unzip git redis-server ufw"
+    local packages="nginx php${php_version} php${php_version}-common php${php_version}-cli php${php_version}-gd php${php_version}-mysql php${php_version}-mbstring php${php_version}-bcmath php${php_version}-xml php${php_version}-fpm php${php_version}-curl php${php_version}-zip mariadb-server tar unzip git redis-server ufw"
 
     execute_with_loading "DEBIAN_FRONTEND=noninteractive apt-get install -y $packages" "Installing PHP, MariaDB, Nginx, and other dependencies"
 
     execute_with_loading "systemctl start nginx && systemctl enable nginx" "Starting and enabling Nginx"
-    execute_with_loading "systemctl start php8.3-fpm && systemctl enable php8.3-fpm" "Starting and enabling PHP-FPM"
+    execute_with_loading "systemctl start php${php_version}-fpm && systemctl enable php${php_version}-fpm" "Starting and enabling PHP-FPM"
     execute_with_loading "systemctl start redis-server && systemctl enable redis-server" "Starting and enabling Redis"
     execute_with_loading "systemctl start cron && systemctl enable cron" "Starting and enabling Cron service"
     execute_with_loading "systemctl stop ufw && systemctl disable ufw" "Stoping and disabling UFW due to later configuration"
@@ -1550,7 +1574,7 @@ server {
 
     location ~ \.php$ {
         fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_pass unix:/run/php/php${php_version}-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
@@ -1601,7 +1625,7 @@ server {
 
     location ~ \.php$ {
         fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_pass unix:/run/php/php${php_version}-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
