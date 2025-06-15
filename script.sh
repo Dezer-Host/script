@@ -1478,45 +1478,41 @@ prompt_ufw_firewall() {
 setup_ssl() {
     print_step "12" "SETTING UP SSL CERTIFICATE"
 
-    execute_with_loading "apt-get install -y certbot python3-certbot-nginx" "Installing Certbot"
+    execute_with_loading "apt-get install -y certbot" "Installing Certbot"
+    execute_with_loading "systemctl stop nginx" "Stopping Nginx to obtain SSL certificate"
 
     print_info "Obtaining SSL certificate for $DOMAIN..."
 
-    cat >/etc/nginx/sites-available/temp-dezerx <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-    root /var/www/html;
-    index index.html;
-    
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-}
-EOF
-
-    ln -sf /etc/nginx/sites-available/temp-dezerx /etc/nginx/sites-enabled/temp-dezerx
-    systemctl reload nginx
-
-    if ! certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "admin@$DOMAIN" --no-eff-email; then
-        print_error "Failed to obtain SSL certificate"
+    if ! certbot certonly --standalone -d "$DOMAIN" --non-interactive --agree-tos --email "admin@$DOMAIN" --no-eff-email >>"$LOG_FILE" 2>&1; then
+        print_error "Failed to obtain SSL certificate using HTTP challenge."
         print_info "Please ensure:"
         print_info "1. Domain $DOMAIN points to this server"
         print_info "2. Port 80 and 443 are open"
         print_info "3. No firewall is blocking the connection"
-        exit 1
+        
+        print_color $WHITE "Would you like to try the advanced DNS challenge instead? (y/n):"
+        read -r dns_choice
+        if [[ "$dns_choice" =~ ^[Yy] ]]; then
+            print_info "You will need to create a DNS TXT record for domain validation."
+            print_info "Certbot will now prompt you with the required DNS record."
+            # DO NOT redirect output for DNS challenge so user can see/copy the TXT record
+            if ! certbot certonly --manual --preferred-challenges dns -d "$DOMAIN" --agree-tos --no-eff-email --email "admin@$DOMAIN" --manual-public-ip-logging-ok; then
+                print_error "DNS challenge also failed. Please check the log: $LOG_FILE"
+                execute_with_loading "systemctl start nginx" "Restarting Nginx"
+                exit 1
+            else
+                print_success "SSL certificate obtained successfully via DNS challenge!"
+            fi
+        else
+            print_error "SSL certificate setup failed. Please check the log: $LOG_FILE"
+            execute_with_loading "systemctl start nginx" "Restarting Nginx"
+            exit 1
+        fi
+    else
+        print_success "SSL certificate obtained successfully!"
     fi
 
-    rm -f /etc/nginx/sites-enabled/temp-dezerx
-    rm -f /etc/nginx/sites-available/temp-dezerx
-
-    print_success "SSL certificate obtained successfully!"
-}
-
-setup_ssl_skip() {
-    print_step "12" "SETTING UP SSL CERTIFICATE"
-
-    print_warning "You selected HTTP. Skipping SSL certificate setup."
+    execute_with_loading "systemctl start nginx" "Restarting Nginx after obtaining SSL certificate"
 }
 
 configure_nginx() {
